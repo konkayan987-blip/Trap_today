@@ -70,7 +70,7 @@ st.markdown("### Executive Dashboard")
 # =========================================================
 sheet_id = "1xPGDL6bpA4k9_D-UkFz3ShMt-6Qzw7GY-mSF9h3i4jM"
 
-csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
+csv_url = csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&gid=459028693
 
 # =========================================================
 # LOAD DATA
