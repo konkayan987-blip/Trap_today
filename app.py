@@ -1,6 +1,6 @@
 # =========================================================
 # STEAM TRAP MAINTENANCE DASHBOARD
-# SAFE VERSION - GOOGLE SHEET READY
+# KPI + SCORING + RANKING VERSION
 # =========================================================
 
 import streamlit as st
@@ -46,7 +46,7 @@ st.markdown("""
 }
 
 .kpi-value {
-    font-size: 36px;
+    font-size: 34px;
     font-weight: bold;
     color: #111;
 }
@@ -56,6 +56,21 @@ st.markdown("""
     color: gray;
 }
 
+.rank-1 {
+    color: gold;
+    font-weight: bold;
+}
+
+.rank-2 {
+    color: silver;
+    font-weight: bold;
+}
+
+.rank-3 {
+    color: #cd7f32;
+    font-weight: bold;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -63,14 +78,16 @@ st.markdown("""
 # TITLE
 # =========================================================
 st.title("🔥 ระบบติดตามผลงานช่าง Steam Trap")
-st.markdown("### Executive Dashboard")
+st.markdown("### Executive KPI Dashboard")
 
 # =========================================================
 # GOOGLE SHEET
 # =========================================================
 sheet_id = "1xPGDL6bpA4k9_D-UkFz3ShMt-6Qzw7GY-mSF9h3i4jM"
 
-csv_url = csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&gid=459028693"
+gid = "459028693"
+
+csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&gid={gid}"
 
 # =========================================================
 # LOAD DATA
@@ -82,10 +99,8 @@ def load_data():
 
         df = pd.read_csv(csv_url)
 
-        # ลบแถวว่าง
         df = df.dropna(how='all')
 
-        # clean columns
         df.columns = [str(col).strip() for col in df.columns]
 
         return df
@@ -93,6 +108,7 @@ def load_data():
     except Exception as e:
 
         st.error(f"โหลดข้อมูลไม่ได้ : {e}")
+
         return pd.DataFrame()
 
 df = load_data()
@@ -103,10 +119,11 @@ df = load_data()
 if df.empty:
 
     st.warning("⚠️ ไม่มีข้อมูล")
+
     st.stop()
 
 # =========================================================
-# DETECT COLUMNS
+# DETECT COLUMN
 # =========================================================
 date_col = None
 tech_col = None
@@ -114,16 +131,40 @@ score_col = None
 
 for col in df.columns:
 
-    col_text = str(col)
+    text = str(col)
 
-    if "วันที่" in col_text or "เวลา" in col_text:
+    if "วันที่" in text or "เวลา" in text:
         date_col = col
 
-    if "ผู้" in col_text or "ช่าง" in col_text:
+    if "ผู้" in text or "ช่าง" in text:
         tech_col = col
 
-    if "คะแนน" in col_text:
+    if "คะแนน" in text:
         score_col = col
+
+# =========================================================
+# CLEAN TECHNICIAN NAME
+# =========================================================
+if tech_col:
+
+    df[tech_col] = df[tech_col].astype(str).str.strip()
+
+    df[tech_col] = df[tech_col].replace({
+
+        "ช่าง เอ": "ช่างเอ",
+        "ช่างเอ ": "ช่างเอ",
+        "ช่างเอ้": "ช่างเอ",
+
+        "ช่าง บิว": "ช่างบิว",
+        "ช่างบิว ": "ช่างบิว",
+
+        "ช่าง พู": "ช่างพู",
+        "ช่างพู ": "ช่างพู",
+
+        "ช่าง ลือ": "ช่างลือ",
+        "ช่างลือ ": "ช่างลือ"
+
+    })
 
 # =========================================================
 # SIDEBAR
@@ -136,7 +177,7 @@ st.sidebar.title("🔎 FILTER")
 if tech_col:
 
     tech_list = ["ทั้งหมด"] + sorted(
-        list(df[tech_col].dropna().astype(str).unique())
+        list(df[tech_col].dropna().unique())
     )
 
     selected_tech = st.sidebar.selectbox(
@@ -147,27 +188,24 @@ if tech_col:
     if selected_tech != "ทั้งหมด":
 
         df = df[
-            df[tech_col].astype(str) == selected_tech
+            df[tech_col] == selected_tech
         ]
 
 # =========================================================
-# DATE FILTER SAFE VERSION
+# DATE FILTER
 # =========================================================
 if date_col:
 
     try:
 
-        # แปลงวันที่
         df[date_col] = pd.to_datetime(
             df[date_col],
             errors='coerce',
             dayfirst=True
         )
 
-        # ลบวันที่เสีย
         df = df[df[date_col].notna()]
 
-        # ถ้ามีข้อมูลวันที่
         if not df.empty:
 
             min_date = df[date_col].min().date()
@@ -187,57 +225,85 @@ if date_col:
                     (df[date_col].dt.date <= end_date)
                 ]
 
-        else:
-
-            st.warning("⚠️ ไม่พบข้อมูลวันที่ที่ถูกต้อง")
-
-    except Exception as e:
-
-        st.error(f"Date Error : {e}")
+    except:
+        pass
 
 # =========================================================
-# KPI
+# KPI CALCULATION
 # =========================================================
 total_jobs = len(df)
 
-# technician
 if tech_col:
     total_tech = df[tech_col].nunique()
 else:
     total_tech = 0
 
-# average score
-avg_score = 0
+# =========================================================
+# SCORING SYSTEM
+# =========================================================
+if tech_col:
 
-if score_col:
+    ranking = (
+        df.groupby(tech_col)
+        .size()
+        .reset_index(name='Total Jobs')
+    )
 
-    try:
+    # Productivity Score
+    max_job = ranking["Total Jobs"].max()
 
-        df[score_col] = pd.to_numeric(
-            df[score_col],
-            errors='coerce'
-        )
+    ranking["Productivity"] = (
+        ranking["Total Jobs"] / max_job
+    ) * 40
 
-        avg_score = round(
-            df[score_col].mean(),
-            2
-        )
+    # Quality Score
+    ranking["Quality"] = 30
 
-    except:
-        avg_score = 0
+    # Attendance
+    ranking["Attendance"] = 20
 
-# performance
-if avg_score >= 90:
-    performance = "🟢 Excellent"
+    # Safety
+    ranking["Safety"] = 10
 
-elif avg_score >= 75:
-    performance = "🟡 Good"
+    # Total KPI
+    ranking["KPI Score"] = (
+        ranking["Productivity"] +
+        ranking["Quality"] +
+        ranking["Attendance"] +
+        ranking["Safety"]
+    ).round(2)
 
-else:
-    performance = "🔴 Need Improve"
+    # Grade
+    def grade(score):
+
+        if score >= 90:
+            return "🟢 Excellent"
+
+        elif score >= 75:
+            return "🟡 Good"
+
+        else:
+            return "🔴 Improve"
+
+    ranking["Grade"] = ranking["KPI Score"].apply(grade)
+
+    ranking = ranking.sort_values(
+        by="KPI Score",
+        ascending=False
+    )
+
+    ranking.index = ranking.index + 1
 
 # =========================================================
-# KPI DISPLAY
+# KPI SUMMARY
+# =========================================================
+avg_score = round(
+    ranking["KPI Score"].mean(),
+    2
+)
+
+# =========================================================
+# KPI CARDS
 # =========================================================
 col1, col2, col3, col4 = st.columns(4)
 
@@ -265,7 +331,7 @@ with col3:
 
     st.markdown(f"""
     <div class="kpi-card">
-        <div class="kpi-title">Average Score</div>
+        <div class="kpi-title">Average KPI</div>
         <div class="kpi-value">{avg_score}</div>
         <div class="small-text">คะแนนเฉลี่ย</div>
     </div>
@@ -273,60 +339,51 @@ with col3:
 
 with col4:
 
+    best_tech = ranking.iloc[0][tech_col]
+
     st.markdown(f"""
     <div class="kpi-card">
-        <div class="kpi-title">Performance</div>
-        <div class="kpi-value">{performance}</div>
-        <div class="small-text">สถานะรวม</div>
+        <div class="kpi-title">Top Performer</div>
+        <div class="kpi-value">🏆</div>
+        <div class="small-text">{best_tech}</div>
     </div>
     """, unsafe_allow_html=True)
 
 st.markdown("---")
 
 # =========================================================
-# CHART SECTION
+# CHARTS
 # =========================================================
 left, right = st.columns(2)
 
 # =========================================================
-# TECH PERFORMANCE
+# BAR CHART
 # =========================================================
 with left:
 
     st.subheader("👷 ผลงานช่าง")
 
-    if tech_col:
+    fig_bar = px.bar(
+        ranking,
+        x=tech_col,
+        y='Total Jobs',
+        text='Total Jobs',
+        color='KPI Score',
+        title='จำนวนงานตรวจของช่าง'
+    )
 
-        tech_summary = (
-            df.groupby(tech_col)
-            .size()
-            .reset_index(name='Total Jobs')
-            .sort_values(
-                by='Total Jobs',
-                ascending=False
-            )
-        )
+    fig_bar.update_traces(
+        textposition='outside'
+    )
 
-        fig_bar = px.bar(
-            tech_summary,
-            x=tech_col,
-            y='Total Jobs',
-            text='Total Jobs',
-            title='จำนวนงานตรวจของช่าง'
-        )
+    fig_bar.update_layout(
+        height=450
+    )
 
-        fig_bar.update_traces(
-            textposition='outside'
-        )
-
-        fig_bar.update_layout(
-            height=450
-        )
-
-        st.plotly_chart(
-            fig_bar,
-            width='stretch'
-        )
+    st.plotly_chart(
+        fig_bar,
+        width='stretch'
+    )
 
 # =========================================================
 # PIE CHART
@@ -335,36 +392,54 @@ with right:
 
     st.subheader("📊 สัดส่วนงานของช่าง")
 
-    if tech_col:
+    fig_pie = px.pie(
+        ranking,
+        names=tech_col,
+        values='Total Jobs',
+        hole=0.45
+    )
 
-        pie_data = (
-            df.groupby(tech_col)
-            .size()
-            .reset_index(name='Total')
-        )
+    fig_pie.update_layout(
+        height=450
+    )
 
-        fig_pie = px.pie(
-            pie_data,
-            names=tech_col,
-            values='Total',
-            hole=0.45
-        )
+    st.plotly_chart(
+        fig_pie,
+        width='stretch'
+    )
 
-        fig_pie.update_layout(
-            height=450
-        )
+# =========================================================
+# KPI SCORE CHART
+# =========================================================
+st.subheader("⭐ KPI Score Ranking")
 
-        st.plotly_chart(
-            fig_pie,
-            width='stretch'
-        )
+fig_score = px.bar(
+    ranking,
+    x=tech_col,
+    y='KPI Score',
+    text='KPI Score',
+    color='KPI Score'
+)
+
+fig_score.update_traces(
+    textposition='outside'
+)
+
+fig_score.update_layout(
+    height=500
+)
+
+st.plotly_chart(
+    fig_score,
+    width='stretch'
+)
 
 # =========================================================
 # DAILY TREND
 # =========================================================
-st.subheader("📈 Daily Inspection Trend")
-
 if date_col and not df.empty:
+
+    st.subheader("📈 Daily Inspection Trend")
 
     daily = (
         df.groupby(df[date_col].dt.date)
@@ -376,8 +451,7 @@ if date_col and not df.empty:
         daily,
         x=date_col,
         y='Total Jobs',
-        markers=True,
-        title='แนวโน้มการตรวจรายวัน'
+        markers=True
     )
 
     fig_line.update_layout(
@@ -390,63 +464,53 @@ if date_col and not df.empty:
     )
 
 # =========================================================
-# SCORE ANALYSIS
+# RANKING TABLE
 # =========================================================
-if score_col:
+st.subheader("🏆 KPI Ranking Table")
 
-    st.subheader("⭐ Score Analysis")
+show_table = ranking[[
+    tech_col,
+    "Total Jobs",
+    "Productivity",
+    "Quality",
+    "Attendance",
+    "Safety",
+    "KPI Score",
+    "Grade"
+]]
 
-    try:
+show_table.columns = [
+    "ช่าง",
+    "จำนวนงาน",
+    "Productivity",
+    "Quality",
+    "Attendance",
+    "Safety",
+    "KPI Score",
+    "Grade"
+]
 
-        fig_hist = px.histogram(
-            df,
-            x=score_col,
-            nbins=20,
-            title='Distribution of Score'
-        )
-
-        fig_hist.update_layout(
-            height=450
-        )
-
-        st.plotly_chart(
-            fig_hist,
-            width='stretch'
-        )
-
-    except:
-
-        st.warning("ไม่สามารถวิเคราะห์คะแนนได้")
+st.dataframe(
+    show_table,
+    width='stretch',
+    height=400
+)
 
 # =========================================================
-# RANKING
+# EXPORT
 # =========================================================
-st.subheader("🏆 Technician Ranking")
+st.subheader("⬇️ Export Data")
 
-if tech_col:
+csv = show_table.to_csv(
+    index=False
+).encode('utf-8-sig')
 
-    ranking = (
-        df.groupby(tech_col)
-        .size()
-        .reset_index(name='Total Jobs')
-        .sort_values(
-            by='Total Jobs',
-            ascending=False
-        )
-    )
-
-    ranking.index = ranking.index + 1
-
-    ranking.columns = [
-        "ช่าง",
-        "จำนวนงาน"
-    ]
-
-    st.dataframe(
-        ranking,
-        width='stretch',
-        height=350
-    )
+st.download_button(
+    label="📥 Download KPI CSV",
+    data=csv,
+    file_name='steam_trap_kpi.csv',
+    mime='text/csv'
+)
 
 # =========================================================
 # RAW DATA
@@ -458,22 +522,6 @@ with st.expander("📄 ดูข้อมูลทั้งหมด"):
         width='stretch',
         height=500
     )
-
-# =========================================================
-# EXPORT CSV
-# =========================================================
-st.subheader("⬇️ Export Data")
-
-csv = df.to_csv(
-    index=False
-).encode('utf-8-sig')
-
-st.download_button(
-    label="📥 Download CSV",
-    data=csv,
-    file_name='steam_trap_dashboard.csv',
-    mime='text/csv'
-)
 
 # =========================================================
 # FOOTER
