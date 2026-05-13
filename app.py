@@ -1,14 +1,11 @@
 # =========================================================
 # STEAM TRAP MAINTENANCE DASHBOARD
-# VERSION : EXECUTIVE EDITION
-# DEVELOPED WITH STREAMLIT
+# SAFE VERSION - GOOGLE SHEET READY
 # =========================================================
 
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
-from datetime import datetime
 import numpy as np
 
 # =========================================================
@@ -49,9 +46,9 @@ st.markdown("""
 }
 
 .kpi-value {
-    font-size: 38px;
+    font-size: 36px;
     font-weight: bold;
-    color: #0E1117;
+    color: #111;
 }
 
 .small-text {
@@ -81,20 +78,35 @@ csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
 @st.cache_data(ttl=300)
 def load_data():
 
-    df = pd.read_csv(csv_url)
+    try:
 
-    # ลบแถวว่าง
-    df = df.dropna(how='all')
+        df = pd.read_csv(csv_url)
 
-    # clean column
-    df.columns = [str(col).strip() for col in df.columns]
+        # ลบแถวว่าง
+        df = df.dropna(how='all')
 
-    return df
+        # clean columns
+        df.columns = [str(col).strip() for col in df.columns]
+
+        return df
+
+    except Exception as e:
+
+        st.error(f"โหลดข้อมูลไม่ได้ : {e}")
+        return pd.DataFrame()
 
 df = load_data()
 
 # =========================================================
-# DETECT COLUMN
+# CHECK DATA
+# =========================================================
+if df.empty:
+
+    st.warning("⚠️ ไม่มีข้อมูล")
+    st.stop()
+
+# =========================================================
+# DETECT COLUMNS
 # =========================================================
 date_col = None
 tech_col = None
@@ -102,39 +114,29 @@ score_col = None
 
 for col in df.columns:
 
-    if "วันที่" in col or "เวลา" in col:
+    col_text = str(col)
+
+    if "วันที่" in col_text or "เวลา" in col_text:
         date_col = col
 
-    if "ผู้" in col or "ช่าง" in col:
+    if "ผู้" in col_text or "ช่าง" in col_text:
         tech_col = col
 
-    if "คะแนน" in col:
+    if "คะแนน" in col_text:
         score_col = col
-
-# =========================================================
-# DATE CLEAN
-# =========================================================
-if date_col:
-
-    df[date_col] = pd.to_datetime(
-        df[date_col],
-        errors='coerce'
-    )
-
-    df = df.dropna(subset=[date_col])
 
 # =========================================================
 # SIDEBAR
 # =========================================================
 st.sidebar.title("🔎 FILTER")
 
-# -------------------------
+# =========================================================
 # TECH FILTER
-# -------------------------
+# =========================================================
 if tech_col:
 
-    tech_list = ["ทั้งหมด"] + list(
-        sorted(df[tech_col].dropna().unique())
+    tech_list = ["ทั้งหมด"] + sorted(
+        list(df[tech_col].dropna().astype(str).unique())
     )
 
     selected_tech = st.sidebar.selectbox(
@@ -144,32 +146,57 @@ if tech_col:
 
     if selected_tech != "ทั้งหมด":
 
-        df = df[df[tech_col] == selected_tech]
-
-# -------------------------
-# DATE FILTER
-# -------------------------
-if date_col:
-
-    min_date = df[date_col].min().date()
-    max_date = df[date_col].max().date()
-
-    date_range = st.sidebar.date_input(
-        "เลือกช่วงวันที่",
-        value=(min_date, max_date)
-    )
-
-    if len(date_range) == 2:
-
-        start_date, end_date = date_range
-
         df = df[
-            (df[date_col].dt.date >= start_date) &
-            (df[date_col].dt.date <= end_date)
+            df[tech_col].astype(str) == selected_tech
         ]
 
 # =========================================================
-# KPI CALCULATION
+# DATE FILTER SAFE VERSION
+# =========================================================
+if date_col:
+
+    try:
+
+        # แปลงวันที่
+        df[date_col] = pd.to_datetime(
+            df[date_col],
+            errors='coerce',
+            dayfirst=True
+        )
+
+        # ลบวันที่เสีย
+        df = df[df[date_col].notna()]
+
+        # ถ้ามีข้อมูลวันที่
+        if not df.empty:
+
+            min_date = df[date_col].min().date()
+            max_date = df[date_col].max().date()
+
+            date_range = st.sidebar.date_input(
+                "เลือกช่วงวันที่",
+                value=(min_date, max_date)
+            )
+
+            if len(date_range) == 2:
+
+                start_date, end_date = date_range
+
+                df = df[
+                    (df[date_col].dt.date >= start_date) &
+                    (df[date_col].dt.date <= end_date)
+                ]
+
+        else:
+
+            st.warning("⚠️ ไม่พบข้อมูลวันที่ที่ถูกต้อง")
+
+    except Exception as e:
+
+        st.error(f"Date Error : {e}")
+
+# =========================================================
+# KPI
 # =========================================================
 total_jobs = len(df)
 
@@ -179,12 +206,13 @@ if tech_col:
 else:
     total_tech = 0
 
-# score
+# average score
 avg_score = 0
 
 if score_col:
 
     try:
+
         df[score_col] = pd.to_numeric(
             df[score_col],
             errors='coerce'
@@ -198,18 +226,15 @@ if score_col:
     except:
         avg_score = 0
 
-# completion
-completion_rate = 100
-
-# status
+# performance
 if avg_score >= 90:
-    status = "🟢 Excellent"
+    performance = "🟢 Excellent"
 
 elif avg_score >= 75:
-    status = "🟡 Good"
+    performance = "🟡 Good"
 
 else:
-    status = "🔴 Need Improve"
+    performance = "🔴 Need Improve"
 
 # =========================================================
 # KPI DISPLAY
@@ -217,6 +242,7 @@ else:
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
+
     st.markdown(f"""
     <div class="kpi-card">
         <div class="kpi-title">Total Inspection</div>
@@ -226,6 +252,7 @@ with col1:
     """, unsafe_allow_html=True)
 
 with col2:
+
     st.markdown(f"""
     <div class="kpi-card">
         <div class="kpi-title">Technician</div>
@@ -235,6 +262,7 @@ with col2:
     """, unsafe_allow_html=True)
 
 with col3:
+
     st.markdown(f"""
     <div class="kpi-card">
         <div class="kpi-title">Average Score</div>
@@ -244,10 +272,11 @@ with col3:
     """, unsafe_allow_html=True)
 
 with col4:
+
     st.markdown(f"""
     <div class="kpi-card">
         <div class="kpi-title">Performance</div>
-        <div class="kpi-value">{status}</div>
+        <div class="kpi-value">{performance}</div>
         <div class="small-text">สถานะรวม</div>
     </div>
     """, unsafe_allow_html=True)
@@ -260,7 +289,7 @@ st.markdown("---")
 left, right = st.columns(2)
 
 # =========================================================
-# TECHNICIAN PERFORMANCE
+# TECH PERFORMANCE
 # =========================================================
 with left:
 
@@ -296,7 +325,7 @@ with left:
 
         st.plotly_chart(
             fig_bar,
-            use_container_width=True
+            width='stretch'
         )
 
 # =========================================================
@@ -327,7 +356,7 @@ with right:
 
         st.plotly_chart(
             fig_pie,
-            use_container_width=True
+            width='stretch'
         )
 
 # =========================================================
@@ -335,7 +364,7 @@ with right:
 # =========================================================
 st.subheader("📈 Daily Inspection Trend")
 
-if date_col:
+if date_col and not df.empty:
 
     daily = (
         df.groupby(df[date_col].dt.date)
@@ -357,7 +386,7 @@ if date_col:
 
     st.plotly_chart(
         fig_line,
-        use_container_width=True
+        width='stretch'
     )
 
 # =========================================================
@@ -382,14 +411,15 @@ if score_col:
 
         st.plotly_chart(
             fig_hist,
-            use_container_width=True
+            width='stretch'
         )
 
     except:
+
         st.warning("ไม่สามารถวิเคราะห์คะแนนได้")
 
 # =========================================================
-# RANKING TABLE
+# RANKING
 # =========================================================
 st.subheader("🏆 Technician Ranking")
 
@@ -414,8 +444,8 @@ if tech_col:
 
     st.dataframe(
         ranking,
-        use_container_width=True,
-        height=300
+        width='stretch',
+        height=350
     )
 
 # =========================================================
@@ -425,7 +455,7 @@ with st.expander("📄 ดูข้อมูลทั้งหมด"):
 
     st.dataframe(
         df,
-        use_container_width=True,
+        width='stretch',
         height=500
     )
 
@@ -434,7 +464,9 @@ with st.expander("📄 ดูข้อมูลทั้งหมด"):
 # =========================================================
 st.subheader("⬇️ Export Data")
 
-csv = df.to_csv(index=False).encode('utf-8-sig')
+csv = df.to_csv(
+    index=False
+).encode('utf-8-sig')
 
 st.download_button(
     label="📥 Download CSV",
@@ -444,14 +476,8 @@ st.download_button(
 )
 
 # =========================================================
-# AUTO REFRESH INFO
-# =========================================================
-st.caption("🔄 Auto Refresh ทุก 5 นาที")
-
-# =========================================================
 # FOOTER
 # =========================================================
 st.markdown("---")
-st.markdown(
-    "### Developed for Maintenance Team 🚀"
-)
+st.caption("🔄 Auto Refresh ทุก 5 นาที")
+st.markdown("### Developed for Maintenance Team 🚀")
