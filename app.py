@@ -1,7 +1,7 @@
 # =========================================================
 # STEAM TRAP MAINTENANCE DASHBOARD
-# Developed for Factory Maintenance Team
-# Streamlit + Google Sheet
+# VERSION : EXECUTIVE EDITION
+# DEVELOPED WITH STREAMLIT
 # =========================================================
 
 import streamlit as st
@@ -9,6 +9,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
+import numpy as np
 
 # =========================================================
 # PAGE CONFIG
@@ -29,22 +30,32 @@ st.markdown("""
     background-color: #f5f7fa;
 }
 
-.kpi-card {
-    background-color: white;
-    padding: 20px;
-    border-radius: 15px;
-    box-shadow: 0px 2px 10px rgba(0,0,0,0.1);
-    text-align: center;
+.block-container {
+    padding-top: 1rem;
 }
 
-.big-font {
-    font-size: 32px;
+.kpi-card {
+    background: white;
+    padding: 20px;
+    border-radius: 18px;
+    text-align: center;
+    box-shadow: 0px 2px 15px rgba(0,0,0,0.08);
+    border-left: 8px solid #ff4b4b;
+}
+
+.kpi-title {
+    font-size: 16px;
+    color: gray;
+}
+
+.kpi-value {
+    font-size: 38px;
     font-weight: bold;
     color: #0E1117;
 }
 
-.small-font {
-    font-size: 16px;
+.small-text {
+    font-size: 14px;
     color: gray;
 }
 
@@ -54,13 +65,12 @@ st.markdown("""
 # =========================================================
 # TITLE
 # =========================================================
-st.title("🔥 Steam Trap Maintenance Dashboard")
-st.markdown("### ระบบติดตามผลงานช่าง Steam Trap")
+st.title("🔥 ระบบติดตามผลงานช่าง Steam Trap")
+st.markdown("### Executive Dashboard")
 
 # =========================================================
-# GOOGLE SHEET CSV URL
+# GOOGLE SHEET
 # =========================================================
-
 sheet_id = "1xPGDL6bpA4k9_D-UkFz3ShMt-6Qzw7GY-mSF9h3i4jM"
 
 csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
@@ -70,9 +80,13 @@ csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
 # =========================================================
 @st.cache_data(ttl=300)
 def load_data():
+
     df = pd.read_csv(csv_url)
 
-    # เปลี่ยนชื่อคอลัมน์ภาษาไทยให้อ่านง่าย
+    # ลบแถวว่าง
+    df = df.dropna(how='all')
+
+    # clean column
     df.columns = [str(col).strip() for col in df.columns]
 
     return df
@@ -80,15 +94,8 @@ def load_data():
 df = load_data()
 
 # =========================================================
-# SHOW RAW DATA
+# DETECT COLUMN
 # =========================================================
-with st.expander("📄 ดูข้อมูลทั้งหมด"):
-    st.dataframe(df, use_container_width=True)
-
-# =========================================================
-# DETECT COLUMNS
-# =========================================================
-
 date_col = None
 tech_col = None
 score_col = None
@@ -105,19 +112,30 @@ for col in df.columns:
         score_col = col
 
 # =========================================================
-# DATE CONVERT
+# DATE CLEAN
 # =========================================================
 if date_col:
-    df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
+
+    df[date_col] = pd.to_datetime(
+        df[date_col],
+        errors='coerce'
+    )
+
+    df = df.dropna(subset=[date_col])
 
 # =========================================================
 # SIDEBAR
 # =========================================================
-st.sidebar.header("🔎 Filter")
+st.sidebar.title("🔎 FILTER")
 
-# ช่าง
+# -------------------------
+# TECH FILTER
+# -------------------------
 if tech_col:
-    tech_list = ["ทั้งหมด"] + list(df[tech_col].dropna().unique())
+
+    tech_list = ["ทั้งหมด"] + list(
+        sorted(df[tech_col].dropna().unique())
+    )
 
     selected_tech = st.sidebar.selectbox(
         "เลือกช่าง",
@@ -125,20 +143,24 @@ if tech_col:
     )
 
     if selected_tech != "ทั้งหมด":
+
         df = df[df[tech_col] == selected_tech]
 
-# วันที่
+# -------------------------
+# DATE FILTER
+# -------------------------
 if date_col:
 
-    min_date = df[date_col].min()
-    max_date = df[date_col].max()
+    min_date = df[date_col].min().date()
+    max_date = df[date_col].max().date()
 
     date_range = st.sidebar.date_input(
         "เลือกช่วงวันที่",
-        [min_date, max_date]
+        value=(min_date, max_date)
     )
 
     if len(date_range) == 2:
+
         start_date, end_date = date_range
 
         df = df[
@@ -147,23 +169,47 @@ if date_col:
         ]
 
 # =========================================================
-# KPI
+# KPI CALCULATION
 # =========================================================
-
 total_jobs = len(df)
 
-total_tech = 0
+# technician
 if tech_col:
     total_tech = df[tech_col].nunique()
+else:
+    total_tech = 0
 
+# score
 avg_score = 0
+
 if score_col:
+
     try:
-        avg_score = round(pd.to_numeric(df[score_col], errors='coerce').mean(), 2)
+        df[score_col] = pd.to_numeric(
+            df[score_col],
+            errors='coerce'
+        )
+
+        avg_score = round(
+            df[score_col].mean(),
+            2
+        )
+
     except:
         avg_score = 0
 
+# completion
 completion_rate = 100
+
+# status
+if avg_score >= 90:
+    status = "🟢 Excellent"
+
+elif avg_score >= 75:
+    status = "🟡 Good"
+
+else:
+    status = "🔴 Need Improve"
 
 # =========================================================
 # KPI DISPLAY
@@ -173,60 +219,116 @@ col1, col2, col3, col4 = st.columns(4)
 with col1:
     st.markdown(f"""
     <div class="kpi-card">
-        <div class="small-font">Total Inspection</div>
-        <div class="big-font">{total_jobs}</div>
+        <div class="kpi-title">Total Inspection</div>
+        <div class="kpi-value">{total_jobs}</div>
+        <div class="small-text">จำนวนงานตรวจทั้งหมด</div>
     </div>
     """, unsafe_allow_html=True)
 
 with col2:
     st.markdown(f"""
     <div class="kpi-card">
-        <div class="small-font">Technician</div>
-        <div class="big-font">{total_tech}</div>
+        <div class="kpi-title">Technician</div>
+        <div class="kpi-value">{total_tech}</div>
+        <div class="small-text">จำนวนช่าง</div>
     </div>
     """, unsafe_allow_html=True)
 
 with col3:
     st.markdown(f"""
     <div class="kpi-card">
-        <div class="small-font">Average Score</div>
-        <div class="big-font">{avg_score}</div>
+        <div class="kpi-title">Average Score</div>
+        <div class="kpi-value">{avg_score}</div>
+        <div class="small-text">คะแนนเฉลี่ย</div>
     </div>
     """, unsafe_allow_html=True)
 
 with col4:
     st.markdown(f"""
     <div class="kpi-card">
-        <div class="small-font">Completion</div>
-        <div class="big-font">{completion_rate}%</div>
+        <div class="kpi-title">Performance</div>
+        <div class="kpi-value">{status}</div>
+        <div class="small-text">สถานะรวม</div>
     </div>
     """, unsafe_allow_html=True)
 
 st.markdown("---")
 
 # =========================================================
+# CHART SECTION
+# =========================================================
+left, right = st.columns(2)
+
+# =========================================================
 # TECHNICIAN PERFORMANCE
 # =========================================================
-st.subheader("👷 Technician Performance")
+with left:
 
-if tech_col:
+    st.subheader("👷 ผลงานช่าง")
 
-    tech_summary = (
-        df.groupby(tech_col)
-        .size()
-        .reset_index(name='Total Jobs')
-        .sort_values(by='Total Jobs', ascending=False)
-    )
+    if tech_col:
 
-    fig_bar = px.bar(
-        tech_summary,
-        x=tech_col,
-        y='Total Jobs',
-        text='Total Jobs',
-        title='จำนวนงานตรวจของช่าง'
-    )
+        tech_summary = (
+            df.groupby(tech_col)
+            .size()
+            .reset_index(name='Total Jobs')
+            .sort_values(
+                by='Total Jobs',
+                ascending=False
+            )
+        )
 
-    st.plotly_chart(fig_bar, use_container_width=True)
+        fig_bar = px.bar(
+            tech_summary,
+            x=tech_col,
+            y='Total Jobs',
+            text='Total Jobs',
+            title='จำนวนงานตรวจของช่าง'
+        )
+
+        fig_bar.update_traces(
+            textposition='outside'
+        )
+
+        fig_bar.update_layout(
+            height=450
+        )
+
+        st.plotly_chart(
+            fig_bar,
+            use_container_width=True
+        )
+
+# =========================================================
+# PIE CHART
+# =========================================================
+with right:
+
+    st.subheader("📊 สัดส่วนงานของช่าง")
+
+    if tech_col:
+
+        pie_data = (
+            df.groupby(tech_col)
+            .size()
+            .reset_index(name='Total')
+        )
+
+        fig_pie = px.pie(
+            pie_data,
+            names=tech_col,
+            values='Total',
+            hole=0.45
+        )
+
+        fig_pie.update_layout(
+            height=450
+        )
+
+        st.plotly_chart(
+            fig_pie,
+            use_container_width=True
+        )
 
 # =========================================================
 # DAILY TREND
@@ -249,7 +351,14 @@ if date_col:
         title='แนวโน้มการตรวจรายวัน'
     )
 
-    st.plotly_chart(fig_line, use_container_width=True)
+    fig_line.update_layout(
+        height=450
+    )
+
+    st.plotly_chart(
+        fig_line,
+        use_container_width=True
+    )
 
 # =========================================================
 # SCORE ANALYSIS
@@ -260,8 +369,6 @@ if score_col:
 
     try:
 
-        df[score_col] = pd.to_numeric(df[score_col], errors='coerce')
-
         fig_hist = px.histogram(
             df,
             x=score_col,
@@ -269,13 +376,20 @@ if score_col:
             title='Distribution of Score'
         )
 
-        st.plotly_chart(fig_hist, use_container_width=True)
+        fig_hist.update_layout(
+            height=450
+        )
+
+        st.plotly_chart(
+            fig_hist,
+            use_container_width=True
+        )
 
     except:
         st.warning("ไม่สามารถวิเคราะห์คะแนนได้")
 
 # =========================================================
-# RANKING
+# RANKING TABLE
 # =========================================================
 st.subheader("🏆 Technician Ranking")
 
@@ -285,29 +399,52 @@ if tech_col:
         df.groupby(tech_col)
         .size()
         .reset_index(name='Total Jobs')
-        .sort_values(by='Total Jobs', ascending=False)
+        .sort_values(
+            by='Total Jobs',
+            ascending=False
+        )
     )
 
     ranking.index = ranking.index + 1
 
+    ranking.columns = [
+        "ช่าง",
+        "จำนวนงาน"
+    ]
+
     st.dataframe(
         ranking,
-        use_container_width=True
+        use_container_width=True,
+        height=300
     )
 
 # =========================================================
-# DATA TABLE
+# RAW DATA
 # =========================================================
-st.subheader("📋 Inspection Data")
+with st.expander("📄 ดูข้อมูลทั้งหมด"):
 
-st.dataframe(
-    df,
-    use_container_width=True,
-    height=500
+    st.dataframe(
+        df,
+        use_container_width=True,
+        height=500
+    )
+
+# =========================================================
+# EXPORT CSV
+# =========================================================
+st.subheader("⬇️ Export Data")
+
+csv = df.to_csv(index=False).encode('utf-8-sig')
+
+st.download_button(
+    label="📥 Download CSV",
+    data=csv,
+    file_name='steam_trap_dashboard.csv',
+    mime='text/csv'
 )
 
 # =========================================================
-# AUTO REFRESH
+# AUTO REFRESH INFO
 # =========================================================
 st.caption("🔄 Auto Refresh ทุก 5 นาที")
 
@@ -315,4 +452,6 @@ st.caption("🔄 Auto Refresh ทุก 5 นาที")
 # FOOTER
 # =========================================================
 st.markdown("---")
-st.markdown("### Developed for Maintenance Team 🚀")
+st.markdown(
+    "### Developed for Maintenance Team 🚀"
+)
