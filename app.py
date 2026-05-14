@@ -7,9 +7,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import numpy as np
-import re  # เพิ่ม regex สำหรับจัดการลิงก์ Google Drive
-import urllib.request # เพิ่มไลบรารีเพื่อโหลดรูปจาก Google Drive หลังบ้าน
-import base64         # เพิ่มไลบรารีแปลงภาพหลบการบล็อก
+
 # =========================================================
 # PAGE CONFIG
 # =========================================================
@@ -63,7 +61,25 @@ st.markdown("""
     height: 120px;
     object-fit: cover;
     box-shadow: 0px 4px 10px rgba(0,0,0,0.1);
-    border: 3px solid #ff4b4b;
+}
+.img-rank-1 { border: 4px solid gold; }
+.img-rank-2 { border: 4px solid silver; }
+.img-rank-3 { border: 4px solid #cd7f32; }
+.img-rank-4 { border: 4px solid #4a90e2; }
+
+.rank-1 { color: gold; font-weight: bold; text-shadow: 1px 1px 2px #000; }
+.rank-2 { color: silver; font-weight: bold; text-shadow: 1px 1px 2px #000; }
+.rank-3 { color: #cd7f32; font-weight: bold; text-shadow: 1px 1px 2px #000;}
+.rank-4 { color: #4a90e2; font-weight: bold; text-shadow: 1px 1px 2px #000;}
+
+/* บังคับสีตัวหนังสือในการ์ดจัดอันดับให้เข้มขึ้นสำหรับ Dark Mode */
+.performer-card {
+    background: white;
+    padding: 20px;
+    border-radius: 15px;
+    text-align: center;
+    box-shadow: 0px 4px 15px rgba(0,0,0,0.1);
+    color: #333;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -110,7 +126,6 @@ if df.empty:
 date_col = "ลงวันที่ทำการตรวจสตีมแทรป" if "ลงวันที่ทำการตรวจสตีมแทรป" in df.columns else None
 tech_col = "ช่าง ผู้ทำการตรวจสตีมแทรป" if "ช่าง ผู้ทำการตรวจสตีมแทรป" in df.columns else None
 score_col = None
-image_col = "รูปภาพ" if "รูปภาพ" in df.columns else None
 
 # ค้นหาคอลัมน์สำรองกรณีชื่อคอลัมน์เปลี่ยน
 if not date_col or not tech_col:
@@ -126,26 +141,26 @@ if not date_col or not tech_col:
 # =========================================================
 # CLEAN TECHNICIAN NAME & CREATE IMAGE MAP
 # =========================================================
-# 1. ทำความสะอาดชื่อช่างในคอลัมน์หลัก (ตัดช่องว่างออกทั้งหมด ป้องกันการจับคู่ผิดพลาด)
+# 1. ทำความสะอาดชื่อช่างในคอลัมน์หลัก
 if tech_col:
+    # ลบช่องว่างทั้งหมดเพื่อป้องกันการจับคู่ผิด
     df[tech_col] = df[tech_col].astype(str).str.replace(r'\s+', '', regex=True)
     df[tech_col] = df[tech_col].replace({"ช่างเอ้": "ช่างเอ"})
 
-# 2. สร้าง Dictionary จับคู่ "ชื่อช่าง" กับ "ลิงก์รูปภาพโดยตรง"
+# 2. สร้าง Dictionary จับคู่รูปภาพจากคอลัมน์ขวาสุด (รองรับ Postimages)
 tech_image_map = {}
 if 'ช่าง' in df.columns and 'รูปภาพ' in df.columns:
     ref_df = df[['ช่าง', 'รูปภาพ']].dropna()
     for _, row in ref_df.iterrows():
-        # ทำความสะอาดชื่อให้ไร้ช่องว่างเหมือนตารางหลัก
+        # ทำความสะอาดชื่อให้อยู่ในรูปแบบเดียวกัน (ไม่มีช่องว่าง)
         ref_name = str(row['ช่าง']).replace(" ", "")
         ref_name = ref_name.replace("ช่างเอ้", "ช่างเอ")
 
         raw_url = str(row['รูปภาพ']).strip()
         
-        # ป้องกันขั้นสุด: ลบแท็กขยะที่อาจจะติดมาจากการคัดลอกใน Postimages
+        # ลบ BBCode ที่อาจจะติดมาด้วย
         raw_url = raw_url.replace("[/img][/url]", "").replace("[img]", "").replace("[url=", "").strip()
         
-        # เก็บ URL ตรงๆ ไว้
         if raw_url.startswith('http'):
             tech_image_map[ref_name] = raw_url
         else:
@@ -156,7 +171,6 @@ if 'ช่าง' in df.columns and 'รูปภาพ' in df.columns:
 # =========================================================
 st.sidebar.title("🔎 FILTER")
 
-# เพิ่มปุ่มเคลียร์แคช เพื่อให้ดึงข้อมูลใหม่จาก Sheet ทันที
 if st.sidebar.button("🔄 ดึงข้อมูลล่าสุด (Clear Cache)"):
     st.cache_data.clear()
     st.rerun()
@@ -172,8 +186,197 @@ if tech_col:
         df = df[df[tech_col] == selected_tech]
 
 # =========================================================
-# EXPORT
+# DATE FILTER
 # =========================================================
+if date_col:
+    try:
+        df[date_col] = pd.to_datetime(df[date_col], errors='coerce', dayfirst=True)
+        df = df[df[date_col].notna()]
+        if not df.empty:
+            min_date = df[date_col].min().date()
+            max_date = df[date_col].max().date()
+            date_range = st.sidebar.date_input("เลือกช่วงวันที่", value=(min_date, max_date))
+            if len(date_range) == 2:
+                start_date, end_date = date_range
+                df = df[(df[date_col].dt.date >= start_date) & (df[date_col].dt.date <= end_date)]
+    except:
+        pass
+
+# =========================================================
+# KPI CALCULATION
+# =========================================================
+total_jobs = len(df)
+total_tech = df[tech_col].nunique() if tech_col else 0
+
+# =========================================================
+# SCORING SYSTEM
+# =========================================================
+ranking = pd.DataFrame()
+
+if tech_col and total_jobs > 0:
+    ranking = df.groupby(tech_col).size().reset_index(name='Total Jobs')
+
+    # Productivity Score
+    max_job = ranking["Total Jobs"].max()
+    ranking["Productivity"] = (ranking["Total Jobs"] / max_job) * 40 if max_job > 0 else 0
+
+    # Quality, Attendance, Safety Scores
+    ranking["Quality"] = 30
+    ranking["Attendance"] = 20
+    ranking["Safety"] = 10
+
+    # Total KPI
+    ranking["KPI Score"] = (ranking["Productivity"] + ranking["Quality"] + ranking["Attendance"] + ranking["Safety"]).round(2)
+
+    def grade(score):
+        if score >= 90: return "🟢 Excellent"
+        elif score >= 75: return "🟡 Good"
+        else: return "🔴 Improve"
+
+    ranking["Grade"] = ranking["KPI Score"].apply(grade)
+
+    # จัดอันดับตามจำนวนงานที่ทำได้ก่อน แล้วค่อยตามด้วย KPI
+    ranking = ranking.sort_values(by=["Total Jobs", "KPI Score"], ascending=[False, False])
+    ranking = ranking.reset_index(drop=True)
+    ranking.index = ranking.index + 1
+
+# =========================================================
+# KPI CARDS SUMMARY
+# =========================================================
+avg_score = round(ranking["KPI Score"].mean(), 2) if not ranking.empty else 0
+
+col1, col2, col3, col4 = st.columns(4)
+
+with col1:
+    st.markdown(f"""
+    <div class="kpi-card">
+        <div class="kpi-title">Total Inspection</div>
+        <div class="kpi-value">{total_jobs}</div>
+        <div class="small-text">จำนวนงานตรวจทั้งหมด</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+with col2:
+    st.markdown(f"""
+    <div class="kpi-card">
+        <div class="kpi-title">Technician</div>
+        <div class="kpi-value">{total_tech}</div>
+        <div class="small-text">จำนวนช่าง</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+with col3:
+    st.markdown(f"""
+    <div class="kpi-card">
+        <div class="kpi-title">Average KPI</div>
+        <div class="kpi-value">{avg_score}</div>
+        <div class="small-text">คะแนนเฉลี่ย</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+with col4:
+    best_tech = ranking.iloc[0][tech_col] if not ranking.empty else "-"
+    st.markdown(f"""
+    <div class="kpi-card">
+        <div class="kpi-title">Top Performer</div>
+        <div class="kpi-value">🏆</div>
+        <div class="small-text">{best_tech}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+st.markdown("---")
+
+# =========================================================
+# TOP PERFORMER PROFILES (TOP 4)
+# =========================================================
+st.subheader("🏆 Top Performers (จัดอันดับตามจำนวนงานที่ตรวจ)")
+
+if not ranking.empty:
+    top_n = min(4, len(ranking))
+    cols = st.columns(top_n)
+    
+    medals = ["🥇", "🥈", "🥉", "🏅"]
+    rank_classes = ["rank-1", "rank-2", "rank-3", "rank-4"]
+    img_classes = ["img-rank-1", "img-rank-2", "img-rank-3", "img-rank-4"]
+
+    for i in range(top_n):
+        with cols[i]:
+            tech_name = ranking.iloc[i][tech_col]
+            score = ranking.iloc[i]["KPI Score"]
+            jobs_done = ranking.iloc[i]["Total Jobs"]
+            
+            img_url = tech_image_map.get(tech_name)
+            
+            if not img_url:
+                img_url = "https://cdn-icons-png.flaticon.com/512/4140/4140048.png"
+            
+            st.markdown(f"""
+            <div class="performer-card">
+                <div class="profile-img-container">
+                    <img src="{img_url}" class="profile-img {img_classes[i]}" />
+                </div>
+                <h3 class="{rank_classes[i]}">{medals[i]} อันดับ {i+1}</h3>
+                <h4 style="color:#222;">👷 {tech_name}</h4>
+                <p style="color:#d4af37; font-weight:bold;">⭐ KPI Score: {score}</p>
+                <p style="color:#777; font-size:12px;">🔧 ตรวจแล้ว: {jobs_done} รายการ</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+st.markdown("---")
+
+# =========================================================
+# CHARTS
+# =========================================================
+left, right = st.columns(2)
+
+with left:
+    st.subheader("👷 จำนวนงานตรวจของช่าง")
+    if not ranking.empty:
+        fig_bar = px.bar(ranking, x=tech_col, y='Total Jobs', text='Total Jobs', color='KPI Score')
+        fig_bar.update_traces(textposition='outside')
+        fig_bar.update_layout(height=450)
+        st.plotly_chart(fig_bar, use_container_width=True)
+
+with right:
+    st.subheader("📊 สัดส่วนงานของช่าง")
+    if not ranking.empty:
+        fig_pie = px.pie(ranking, names=tech_col, values='Total Jobs', hole=0.45)
+        fig_pie.update_layout(height=450)
+        st.plotly_chart(fig_pie, use_container_width=True)
+
+# =========================================================
+# KPI SCORE CHART
+# =========================================================
+st.subheader("⭐ KPI Score Ranking")
+if not ranking.empty:
+    fig_score = px.bar(ranking, x=tech_col, y='KPI Score', text='KPI Score', color='KPI Score')
+    fig_score.update_traces(textposition='outside')
+    fig_score.update_layout(height=450)
+    st.plotly_chart(fig_score, use_container_width=True)
+
+# =========================================================
+# DAILY TREND
+# =========================================================
+if date_col and not df.empty:
+    st.subheader("📈 Daily Inspection Trend")
+    daily = df.groupby(df[date_col].dt.date).size().reset_index(name='Total Jobs')
+    fig_line = px.line(daily, x=date_col, y='Total Jobs', markers=True)
+    fig_line.update_layout(height=450)
+    st.plotly_chart(fig_line, use_container_width=True)
+
+# =========================================================
+# RANKING TABLE
+# =========================================================
+st.subheader("🏆 KPI Ranking Table")
+
+if not ranking.empty:
+    show_table = ranking[[tech_col, "Total Jobs", "Productivity", "Quality", "Attendance", "Safety", "KPI Score", "Grade"]].copy()
+    show_table.columns = ["ช่าง", "จำนวนงาน", "Productivity", "Quality", "Attendance", "Safety", "KPI Score", "Grade"]
+    st.dataframe(show_table, use_container_width=True, height=400)
+
+    # =========================================================
+    # EXPORT
+    # =========================================================
     st.subheader("⬇️ Export Data")
     csv = show_table.to_csv(index=False).encode('utf-8-sig')
     st.download_button(
@@ -186,9 +389,9 @@ if tech_col:
 # =========================================================
 # RAW DATA
 # =========================================================
-with st.expander("📄 ดูข้อมูล Raw Data ทั้งหมด (คลิกเพื่อตรวจสอบการเชื่อมลิงก์)"):
+with st.expander("📄 ดูข้อมูล Raw Data ทั้งหมด (ใช้ตรวจสอบปัญหาการลิงก์รูปภาพ)"):
     st.write("**สถานะการจับคู่รูปภาพของช่าง:**")
-    st.json(tech_image_map) # พิมพ์ค่าที่จับคู่ได้ให้ดูเลย จะได้รู้ว่าลิงก์ถูกดึงมาไหม
+    st.json(tech_image_map) 
     st.write("---")
     st.write("**ข้อมูลหลักในตาราง:**")
     st.dataframe(df, use_container_width=True, height=500)
