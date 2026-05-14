@@ -8,6 +8,8 @@ import pandas as pd
 import plotly.express as px
 import numpy as np
 import re  # เพิ่ม regex สำหรับจัดการลิงก์ Google Drive
+import urllib.request # เพิ่มไลบรารีเพื่อโหลดรูปจาก Google Drive หลังบ้าน
+import base64         # เพิ่มไลบรารีแปลงภาพหลบการบล็อก
 # =========================================================
 # PAGE CONFIG
 # =========================================================
@@ -124,38 +126,42 @@ if not date_col or not tech_col:
 # =========================================================
 # CLEAN TECHNICIAN NAME & CREATE IMAGE MAP
 # =========================================================
-# 1. ทำความสะอาดชื่อช่างในคอลัมน์หลัก
+# 1. ทำความสะอาดชื่อช่างในคอลัมน์หลัก (ตัดช่องว่างออกทั้งหมด ป้องกันการจับคู่ผิดพลาด)
 if tech_col:
-    df[tech_col] = df[tech_col].astype(str).str.strip()
-    df[tech_col] = df[tech_col].replace({
-        "ช่าง เอ": "ช่างเอ", "ช่างเอ ": "ช่างเอ", "ช่างเอ้": "ช่างเอ",
-        "ช่าง บิว": "ช่างบิว", "ช่างบิว ": "ช่างบิว",
-        "ช่าง พู": "ช่างพู", "ช่างพู ": "ช่างพู",
-        "ช่าง ลือ": "ช่างลือ", "ช่างลือ ": "ช่างลือ",
-        "ช่าง อ๊อฟ": "ช่างอ๊อฟ", "ช่างอ๊อฟ ": "ช่างอ๊อฟ",
-        "ช่าง สอ": "ช่างสอ", "ช่างสอ ": "ช่างสอ"
-    })
+    df[tech_col] = df[tech_col].astype(str).str.replace(r'\s+', '', regex=True)
+    df[tech_col] = df[tech_col].replace({"ช่างเอ้": "ช่างเอ"})
 
-# 2. สร้าง Dictionary จับคู่ "ชื่อช่าง" กับ "ลิงก์รูปภาพ Google Drive"
+# 2. ฟังก์ชันโหลดรูปจาก Google Drive แล้วแปลงเป็น Base64 ฝังในเว็บ (ทะลุการบล็อก 100%)
+@st.cache_data(show_spinner=False, ttl=3600)
+def get_drive_image_base64(img_id):
+    try:
+        url = f"https://drive.google.com/uc?export=download&id={img_id}"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=5) as response:
+            if response.getcode() == 200:
+                b64 = base64.b64encode(response.read()).decode('utf-8')
+                return f"data:image/jpeg;base64,{b64}"
+    except:
+        pass
+    return None
+
+# 3. สร้าง Dictionary จับคู่ "ชื่อช่าง" กับ "ID รูปภาพ Google Drive"
 tech_image_map = {}
 if 'ช่าง' in df.columns and 'รูปภาพ' in df.columns:
     ref_df = df[['ช่าง', 'รูปภาพ']].dropna()
     for _, row in ref_df.iterrows():
-        # ทำความสะอาดชื่อช่างให้ตรงกับตรรกะด้านบน 100%
-        ref_name = str(row['ช่าง']).strip()
-        ref_name = ref_name.replace("ช่าง ", "ช่าง") 
+        # ทำความสะอาดชื่อให้ไร้ช่องว่างเหมือนตารางหลัก
+        ref_name = str(row['ช่าง']).replace(" ", "")
         ref_name = ref_name.replace("ช่างเอ้", "ช่างเอ")
 
         raw_url = str(row['รูปภาพ']).strip()
         
-        # แปลงลิงก์ Google Drive ให้เป็น Thumbnail Link (วิธีนี้แก้ปัญหาภาพไม่ขึ้นได้ดีที่สุด)
         img_id_match = re.search(r'id=([a-zA-Z0-9_-]+)|d/([a-zA-Z0-9_-]+)', raw_url)
         if img_id_match:
             img_id = img_id_match.group(1) if img_id_match.group(1) else img_id_match.group(2)
-            # ใช้ /thumbnail แทน /uc เพื่อหลีกเลี่ยงการถูก Google บล็อกการแสดงผล
-            tech_image_map[ref_name] = f"https://drive.google.com/thumbnail?id={img_id}&sz=w400"
+            tech_image_map[ref_name] = img_id # เก็บแค่ ID ไว้โหลดรูปตอนแสดงผล
         else:
-            tech_image_map[ref_name] = raw_url
+            tech_image_map[ref_name] = None
 
 # =========================================================
 # SIDEBAR
@@ -303,8 +309,14 @@ if not ranking.empty:
             top_score = ranking.iloc[i]["KPI Score"]
             jobs_done = ranking.iloc[i]["Total Jobs"]
             
-            # ดึงรูปภาพจาก Dictionary ที่เราสร้างไว้ตอนต้น
-            img_url = tech_image_map.get(tech_name, "https://cdn-icons-png.flaticon.com/512/3135/3135715.png")
+            # โหลดรูปภาพจาก Google Drive เป็น Base64
+            img_id = tech_image_map.get(tech_name)
+            img_url = "https://cdn-icons-png.flaticon.com/512/3135/3135715.png" # ค่าเริ่มต้นถ้าไม่มีรูป
+            
+            if img_id:
+                b64_img = get_drive_image_base64(img_id)
+                if b64_img:
+                    img_url = b64_img
             
             st.markdown(f"""
             <div style="text-align: center; background: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
