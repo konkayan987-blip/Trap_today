@@ -136,8 +136,8 @@ if tech_col:
 def get_direct_drive_link(img_id):
     if not img_id:
         return None
-    # ใช้ Google Drive Thumbnail API ซึ่งอนุญาตให้โหลดภาพข้ามโดเมนได้
-    return f"https://drive.google.com/thumbnail?id={img_id}&sz=w500-h500"
+    # ใช้ลิงก์รูปแบบ googleusercontent (ทะลุการบล็อกได้ดีที่สุดสำหรับ Drive)
+    return f"https://lh3.googleusercontent.com/d/{img_id}"
 
 # 3. สร้าง Dictionary จับคู่ "ชื่อช่าง" กับ "ID รูปภาพ Google Drive"
 tech_image_map = {}
@@ -287,15 +287,15 @@ with col4:
 st.markdown("---")
 
 # =========================================================
-# TOP PERFORMER PROFILES (TOP 3)
+# TOP PERFORMER PROFILES (TOP 4)
 # =========================================================
 st.subheader("🏆 Top Performers (จัดอันดับตามจำนวนงานที่ตรวจ)")
 
 if not ranking.empty:
-    top_n = min(3, len(ranking)) # แสดงผลสูงสุด 3 อันดับแรก
-    cols = st.columns(top_n)
+    top_n = min(4, len(ranking)) # แสดงผลสูงสุด 4 อันดับแรก
+    cols = st.columns(4) # แบ่งพื้นที่เป็น 4 คอลัมน์เสมอ
     
-    medals = ["🥇 อันดับ 1", "🥈 อันดับ 2", "🥉 อันดับ 3"]
+    medals = ["🥇 อันดับ 1", "🥈 อันดับ 2", "🥉 อันดับ 3", "🏅 อันดับ 4"]
     
     for i in range(top_n):
         with cols[i]:
@@ -303,7 +303,7 @@ if not ranking.empty:
             top_score = ranking.iloc[i]["KPI Score"]
             jobs_done = ranking.iloc[i]["Total Jobs"]
             
-            # โหลดรูปภาพจาก Google Drive ด้วย Thumbnail API
+            # โหลดรูปภาพจาก Google Drive
             img_id = tech_image_map.get(tech_name)
             img_url = "https://cdn-icons-png.flaticon.com/512/3135/3135715.png" # ค่าเริ่มต้นถ้าไม่มีรูป
             
