@@ -98,6 +98,18 @@ if df.empty:
     st.stop()
 
 # =========================================================
+# HELPER: CLEAN NAME
+# =========================================================
+def clean_thai_name(name):
+    """ทำความสะอาดชื่อช่าง ลบช่องว่างและอักขระพิเศษ"""
+    if pd.isna(name): return ""
+    # เอาช่องว่างออกทั้งหมด (Space, Tab, Zero-width space)
+    clean_str = re.sub(r'\s+', '', str(name)).strip()
+    # แก้ไขชื่อที่พบบ่อยว่าเขียนผิด
+    clean_str = clean_str.replace("ช่างเอ้", "ช่างเอ")
+    return clean_str
+
+# =========================================================
 # DETECT MAIN COLUMNS
 # =========================================================
 date_col = "ลงวันที่ทำการตรวจสตีมแทรป" if "ลงวันที่ทำการตรวจสตีมแทรป" in df.columns else None
@@ -109,10 +121,9 @@ if not date_col or not tech_col:
         if not date_col and ("วันที่" in text or "เวลา" in text): date_col = col
         if not tech_col and ("ผู้" in text or "ช่าง ผู้" in text): tech_col = col
 
-# ทำความสะอาดชื่อช่างคอลัมน์หลัก
+# ทำความสะอาดชื่อช่างในตารางหลัก
 if tech_col:
-    df[tech_col] = df[tech_col].astype(str).str.replace(r'\s+', '', regex=True)
-    df[tech_col] = df[tech_col].replace({"ช่างเอ้": "ช่างเอ"})
+    df[tech_col] = df[tech_col].apply(clean_thai_name)
 
 # =========================================================
 # SMART IMAGE EXTRACTOR (Content-Based Scanning)
@@ -121,16 +132,15 @@ tech_image_map = {}
 img_col = None
 map_tech_col = None
 
-# 1. สแกนเนื้อหาหาคอลัมน์ที่มีคำว่า http (คอลัมน์รูปภาพ)
+# 1. สแกนหาคอลัมน์ที่มีคำว่า http (คอลัมน์รูปภาพ)
 for col in df.columns:
     if df[col].astype(str).str.contains(r'https?://', regex=True, na=False).any():
         img_col = col
         break
 
-# 2. ถอยหลังหาคอลัมน์ชื่อช่าง (อ้างอิงจากคอลัมน์รูปภาพ)
+# 2. ถอยหลังหาคอลัมน์ชื่อช่างอ้างอิง
 if img_col:
     idx = df.columns.get_loc(img_col)
-    # หาคอลัมน์ที่มีคำว่า "ช่าง" (ที่ไม่ใช่คอลัมน์หลัก)
     for i in range(idx - 1, -1, -1):
         col_name = df.columns[i]
         if col_name != tech_col:
@@ -138,36 +148,40 @@ if img_col:
                 map_tech_col = col_name
                 break
     
-    # Fallback ถ้าหาไม่เจอ ให้เอาคอลัมน์ทางซ้ายมือติดกัน
     if not map_tech_col and idx > 0:
         map_tech_col = df.columns[idx - 1]
 
-# 3. จับคู่ข้อมูล
+# 3. จับคู่ข้อมูลชื่อกับรูปภาพแบบสุดโหด (Bulletproof Mapping)
 if img_col and map_tech_col:
     for _, row in df.iterrows():
         raw_name = str(row[map_tech_col])
         raw_url = str(row[img_col])
         
-        # ข้ามช่องว่างเปล่า
         if raw_name.lower() in ['nan', 'none', '']: continue
         if raw_url.lower() in ['nan', 'none', '']: continue
         
-        clean_name = raw_name.replace(" ", "").replace("ช่างเอ้", "ช่างเอ")
+        # คลีนชื่อให้เหลือแค่ข้อความติดกัน (เช่น 'ช่างสอ')
+        clean_name = clean_thai_name(raw_name)
         
-        # ตัด tag ขยะ BBCode ทิ้ง
-        clean_url = re.sub(r'\[/?url.*?\]', '', raw_url, flags=re.IGNORECASE)
-        clean_url = re.sub(r'\[/?img.*?\]', '', clean_url, flags=re.IGNORECASE)
-        clean_url = clean_url.strip()
+        # ตัด tag ขยะ BBCode ทิ้งก่อน
+        clean_url_str = re.sub(r'\[/?url.*?\]', '', raw_url, flags=re.IGNORECASE)
+        clean_url_str = re.sub(r'\[/?img.*?\]', '', clean_url_str, flags=re.IGNORECASE)
         
-        # ดึงเฉพาะลิงก์ภาพ
+        # ดึงเฉพาะลิงก์ที่ซ่อนอยู่ออกมา
         final_url = None
-        match = re.search(r'(https?://[^\s"\'<>\[\]]+\.(?:png|jpg|jpeg|webp))', clean_url, re.IGNORECASE)
-        if match:
-            final_url = match.group(1)
-        elif "http" in clean_url: # เผื่อกรณีลิงก์ไม่มีนามสกุล
-            final_url = clean_url
+        urls = re.findall(r'(https?://[^\s<>\[\]]+)', clean_url_str)
+        
+        if urls:
+            # คัดกรองเอาเฉพาะลิงก์ที่เป็นรูปภาพ
+            for u in urls:
+                if any(ext in u.lower() for ext in ['.png', '.jpg', '.jpeg', '.webp', '.gif']):
+                    final_url = u
+                    break
+            # ถ้าหาลิงก์นามสกุลภาพไม่เจอ ให้เอาลิงก์แรกที่เจอมาใช้เผื่อไว้ก่อน
+            if not final_url:
+                final_url = urls[0]
             
-        if final_url and "ช่าง" in clean_name:
+        if final_url and clean_name:
             tech_image_map[clean_name] = final_url
 
 # =========================================================
@@ -255,15 +269,18 @@ if not ranking.empty:
             score = ranking.iloc[i]["KPI Score"]
             jobs_done = ranking.iloc[i]["Total Jobs"]
             
-            # ดึงรูปลิงก์
+            # ดึงรูปลิงก์จากพจนานุกรมที่เราจับคู่ไว้
             img_url = tech_image_map.get(tech_name)
-            if not img_url:
-                img_url = "https://cdn-icons-png.flaticon.com/512/4140/4140048.png" # รูปสำรอง
             
+            # ถ้าระบบหาไม่เจอ ให้ใช้รูปหมวกเหลืองสำรอง
+            if not img_url:
+                img_url = "https://cdn-icons-png.flaticon.com/512/4140/4140048.png"
+            
+            # สร้างการ์ดแสดงผล (มีการใส่ referrerpolicy="no-referrer" เพื่อกันการโดนบล็อก)
             st.markdown(f"""
             <div class="performer-card">
                 <div class="profile-img-container">
-                    <img src="{img_url}" class="profile-img {img_classes[i]}" alt="Profile Image" />
+                    <img src="{img_url}" class="profile-img {img_classes[i]}" alt="Profile Image" referrerpolicy="no-referrer" />
                 </div>
                 <div class="{rank_classes[i]}">{medals[i]} อันดับ {i+1}</div>
                 <div class="tech-name-text">👷 {tech_name}</div>
@@ -323,19 +340,19 @@ if not ranking.empty:
 # RAW DATA (DEBUGGER)
 # =========================================================
 with st.expander("🛠️ ตรวจสอบสถานะการเชื่อมต่อรูปภาพ (คลิกเพื่อดูรายละเอียด)"):
-    st.markdown("**1. สถานะการดึงรูปลิงก์จาก Postimages:**")
+    st.markdown("**1. สถานะการดึงรูปลิงก์จาก Sheet:**")
     if tech_image_map:
         for t_name, link in tech_image_map.items():
-            st.success(f"✅ พบรูปของ **{t_name}** -> {link}")
+            st.success(f"✅ พบรูปของ **{t_name}** -> [คลิกเพื่อดูรูปลิงก์]({link})")
+            if not any(ext in link.lower() for ext in ['.png', '.jpg', '.jpeg', '.gif']):
+                st.warning(f"⚠️ คำเตือน: ลิงก์ของ {t_name} ไม่ได้ลงท้ายด้วย .png หรือ .jpg อาจจะทำให้รูปภาพไม่แสดงผล")
     else:
         st.error("❌ หาลิงก์รูปไม่เจอเลย กรุณาตรวจสอบตาราง Sheet")
     
     st.markdown("---")
     st.markdown("**2. ข้อมูลคอลัมน์ที่ระบบ AI ตรวจพบ (Raw Table):**")
     if img_col and map_tech_col:
-        st.info(f"🔍 ตรวจพบ Column ชื่อช่าง: **'{map_tech_col}'** | Column รูป: **'{img_col}'**")
-        
-        # โชว์ข้อมูลดิบเฉพาะ 2 คอลัมน์ที่หาเจอ
+        st.info(f"🔍 ตรวจพบ Column อ้างอิงชื่อช่าง: **'{map_tech_col}'** | Column รูป: **'{img_col}'**")
         raw_show = df[[map_tech_col, img_col]].copy()
         raw_show = raw_show.dropna(subset=[img_col])
         st.dataframe(raw_show, use_container_width=True)
