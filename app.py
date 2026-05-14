@@ -1,6 +1,6 @@
 # =========================================================
 # STEAM TRAP MAINTENANCE DASHBOARD
-# KPI + SCORING + RANKING VERSION (ULTIMATE IMAGE FIX)
+# KPI + SCORING + RANKING VERSION (ULTIMATE IMAGE FIX V5)
 # =========================================================
 
 import streamlit as st
@@ -62,10 +62,16 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =========================================================
-# TITLE
+# TITLE & SIDEBAR
 # =========================================================
 st.title("🔥 ระบบติดตามผลงานช่าง Steam Trap")
 st.markdown("### Executive KPI Dashboard")
+
+st.sidebar.title("🔎 FILTER")
+if st.sidebar.button("🔄 ดึงข้อมูลล่าสุด (Clear Cache)", type="primary"):
+    st.cache_data.clear()
+    st.rerun()
+st.sidebar.markdown("---")
 
 # =========================================================
 # GOOGLE SHEET
@@ -92,7 +98,7 @@ if df.empty:
     st.stop()
 
 # =========================================================
-# DETECT COLUMN
+# DETECT MAIN COLUMNS
 # =========================================================
 date_col = "ลงวันที่ทำการตรวจสตีมแทรป" if "ลงวันที่ทำการตรวจสตีมแทรป" in df.columns else None
 tech_col = "ช่าง ผู้ทำการตรวจสตีมแทรป" if "ช่าง ผู้ทำการตรวจสตีมแทรป" in df.columns else None
@@ -103,74 +109,70 @@ if not date_col or not tech_col:
         if not date_col and ("วันที่" in text or "เวลา" in text): date_col = col
         if not tech_col and ("ผู้" in text or "ช่าง ผู้" in text): tech_col = col
 
-# ทำความสะอาดชื่อช่างคอลัมน์หลัก (ลบช่องว่างทั้งหมด)
+# ทำความสะอาดชื่อช่างคอลัมน์หลัก
 if tech_col:
     df[tech_col] = df[tech_col].astype(str).str.replace(r'\s+', '', regex=True)
     df[tech_col] = df[tech_col].replace({"ช่างเอ้": "ช่างเอ"})
 
 # =========================================================
-# SMART IMAGE EXTRACTOR (ป้องกันลิงก์เสีย 100%)
+# SMART IMAGE EXTRACTOR (Content-Based Scanning)
 # =========================================================
-def extract_clean_image_url(raw_text):
-    text = str(raw_text).strip()
-    if not text or text.lower() == 'nan': return None
-    
-    # สแกนหาลิงก์ที่ลงท้ายด้วยนามสกุลรูปภาพโดยตรง (มองข้ามวงเล็บหรือ tag ขยะ)
-    match = re.search(r'(https?://[^\s"\'<>\[\]]+\.(?:png|jpg|jpeg|webp))', text, re.IGNORECASE)
-    if match:
-        return match.group(1)
-    
-    # ถ้าไม่มีนามสกุล ลองดึงจาก tag [img]...[/img] 
-    match_bb = re.search(r'\[img\](.*?)\[/img\]', text, re.IGNORECASE)
-    if match_bb:
-        return match_bb.group(1).strip()
-        
-    # เผื่อกรณีใส่ลิงก์มาดื้อๆ
-    if text.startswith('http') and '[' not in text:
-        return text
-        
-    return None
-
 tech_image_map = {}
-
-# ค้นหาคอลัมน์รูปภาพและคอลัมน์ชื่อช่างอ้างอิง
 img_col = None
 map_tech_col = None
 
+# 1. สแกนเนื้อหาหาคอลัมน์ที่มีคำว่า http (คอลัมน์รูปภาพ)
 for col in df.columns:
-    if "รูป" in col or "ภาพ" in col:
+    if df[col].astype(str).str.contains(r'https?://', regex=True, na=False).any():
         img_col = col
+        break
 
+# 2. ถอยหลังหาคอลัมน์ชื่อช่าง (อ้างอิงจากคอลัมน์รูปภาพ)
 if img_col:
-    # หาคอลัมน์ "ช่าง" ที่อยู่ใกล้กับคอลัมน์ "รูปภาพ"
-    if 'ช่าง' in df.columns and img_col != 'ช่าง':
-        map_tech_col = 'ช่าง'
-    else:
-        # ถ้าหาชื่อคอลัมน์ไม่เจอ ให้เอาคอลัมน์ทางซ้ายมือของคอลัมน์รูปภาพ
-        idx = df.columns.get_loc(img_col)
-        map_tech_col = df.columns[idx-1]
+    idx = df.columns.get_loc(img_col)
+    # หาคอลัมน์ที่มีคำว่า "ช่าง" (ที่ไม่ใช่คอลัมน์หลัก)
+    for i in range(idx - 1, -1, -1):
+        col_name = df.columns[i]
+        if col_name != tech_col:
+            if df[col_name].astype(str).str.contains('ช่าง', na=False).any():
+                map_tech_col = col_name
+                break
+    
+    # Fallback ถ้าหาไม่เจอ ให้เอาคอลัมน์ทางซ้ายมือติดกัน
+    if not map_tech_col and idx > 0:
+        map_tech_col = df.columns[idx - 1]
 
+# 3. จับคู่ข้อมูล
 if img_col and map_tech_col:
-    temp_df = df[[map_tech_col, img_col]].dropna()
-    for _, row in temp_df.iterrows():
-        raw_name = str(row[map_tech_col]).replace(" ", "").replace("ช่างเอ้", "ช่างเอ")
+    for _, row in df.iterrows():
+        raw_name = str(row[map_tech_col])
         raw_url = str(row[img_col])
-        clean_url = extract_clean_image_url(raw_url)
         
-        if clean_url and "ช่าง" in raw_name:
-            tech_image_map[raw_name] = clean_url
+        # ข้ามช่องว่างเปล่า
+        if raw_name.lower() in ['nan', 'none', '']: continue
+        if raw_url.lower() in ['nan', 'none', '']: continue
+        
+        clean_name = raw_name.replace(" ", "").replace("ช่างเอ้", "ช่างเอ")
+        
+        # ตัด tag ขยะ BBCode ทิ้ง
+        clean_url = re.sub(r'\[/?url.*?\]', '', raw_url, flags=re.IGNORECASE)
+        clean_url = re.sub(r'\[/?img.*?\]', '', clean_url, flags=re.IGNORECASE)
+        clean_url = clean_url.strip()
+        
+        # ดึงเฉพาะลิงก์ภาพ
+        final_url = None
+        match = re.search(r'(https?://[^\s"\'<>\[\]]+\.(?:png|jpg|jpeg|webp))', clean_url, re.IGNORECASE)
+        if match:
+            final_url = match.group(1)
+        elif "http" in clean_url: # เผื่อกรณีลิงก์ไม่มีนามสกุล
+            final_url = clean_url
+            
+        if final_url and "ช่าง" in clean_name:
+            tech_image_map[clean_name] = final_url
 
 # =========================================================
-# SIDEBAR
+# FILTER LOGIC
 # =========================================================
-st.sidebar.title("🔎 FILTER")
-
-if st.sidebar.button("🔄 ดึงข้อมูลล่าสุด (Clear Cache)", type="primary"):
-    st.cache_data.clear()
-    st.rerun()
-
-st.sidebar.markdown("---")
-
 if tech_col:
     tech_list = ["ทั้งหมด"] + sorted(list(df[tech_col].dropna().unique()))
     selected_tech = st.sidebar.selectbox("เลือกช่าง", tech_list)
@@ -213,9 +215,7 @@ if tech_col and total_jobs > 0:
         else: return "🔴 Improve"
 
     ranking["Grade"] = ranking["KPI Score"].apply(grade)
-    # บังคับให้เรียงตามจำนวนงานเป็นหลัก
-    ranking = ranking.sort_values(by=["Total Jobs", "KPI Score"], ascending=[False, False])
-    ranking = ranking.reset_index(drop=True)
+    ranking = ranking.sort_values(by=["Total Jobs", "KPI Score"], ascending=[False, False]).reset_index(drop=True)
     ranking.index = ranking.index + 1
 
 # =========================================================
@@ -243,7 +243,7 @@ st.subheader("🏆 Top Performers (จัดอันดับตามจำน
 
 if not ranking.empty:
     top_n = min(4, len(ranking))
-    cols = st.columns(4) # แบ่ง 4 คอลัมน์คงที่
+    cols = st.columns(4)
     
     medals = ["🥇", "🥈", "🥉", "🏅"]
     rank_classes = ["rank-1", "rank-2", "rank-3", "rank-4"]
@@ -255,11 +255,10 @@ if not ranking.empty:
             score = ranking.iloc[i]["KPI Score"]
             jobs_done = ranking.iloc[i]["Total Jobs"]
             
-            # ดึงรูปลิงก์ตรงที่ถูกทำความสะอาดแล้ว
+            # ดึงรูปลิงก์
             img_url = tech_image_map.get(tech_name)
-            
             if not img_url:
-                img_url = "https://cdn-icons-png.flaticon.com/512/4140/4140048.png"
+                img_url = "https://cdn-icons-png.flaticon.com/512/4140/4140048.png" # รูปสำรอง
             
             st.markdown(f"""
             <div class="performer-card">
@@ -307,7 +306,7 @@ if date_col and not df.empty:
     st.plotly_chart(fig_line, use_container_width=True)
 
 # =========================================================
-# RANKING TABLE
+# RANKING TABLE & EXPORT
 # =========================================================
 st.subheader("🏆 KPI Ranking Table")
 
@@ -316,7 +315,6 @@ if not ranking.empty:
     show_table.columns = ["ช่าง", "จำนวนงาน", "Productivity", "Quality", "Attendance", "Safety", "KPI Score", "Grade"]
     st.dataframe(show_table, use_container_width=True, height=400)
 
-    # EXPORT
     st.subheader("⬇️ Export Data")
     csv = show_table.to_csv(index=False).encode('utf-8-sig')
     st.download_button(label="📥 Download KPI CSV", data=csv, file_name='steam_trap_kpi.csv', mime='text/csv')
@@ -333,12 +331,19 @@ with st.expander("🛠️ ตรวจสอบสถานะการเชื
         st.error("❌ หาลิงก์รูปไม่เจอเลย กรุณาตรวจสอบตาราง Sheet")
     
     st.markdown("---")
-    st.markdown("**2. ข้อมูลตารางอ้างอิง (Raw Table):**")
+    st.markdown("**2. ข้อมูลคอลัมน์ที่ระบบ AI ตรวจพบ (Raw Table):**")
     if img_col and map_tech_col:
-        st.dataframe(df[[map_tech_col, img_col]].dropna(), use_container_width=True)
+        st.info(f"🔍 ตรวจพบ Column ชื่อช่าง: **'{map_tech_col}'** | Column รูป: **'{img_col}'**")
+        
+        # โชว์ข้อมูลดิบเฉพาะ 2 คอลัมน์ที่หาเจอ
+        raw_show = df[[map_tech_col, img_col]].copy()
+        raw_show = raw_show.dropna(subset=[img_col])
+        st.dataframe(raw_show, use_container_width=True)
+    else:
+        st.error("❌ สแกนไม่พบคอลัมน์ที่มีเนื้อหาเป็นลิงก์ http")
     
     st.markdown("---")
-    st.markdown("**3. ข้อมูลดิบทั้งหมด:**")
+    st.markdown("**3. ข้อมูลดิบทั้งหมดใน Sheet:**")
     st.dataframe(df, use_container_width=True, height=300)
 
 # =========================================================
