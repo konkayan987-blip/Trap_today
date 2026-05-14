@@ -131,19 +131,13 @@ if tech_col:
     df[tech_col] = df[tech_col].astype(str).str.replace(r'\s+', '', regex=True)
     df[tech_col] = df[tech_col].replace({"ช่างเอ้": "ช่างเอ"})
 
-# 2. ฟังก์ชันโหลดรูปจาก Google Drive แล้วแปลงเป็น Base64 ฝังในเว็บ (ทะลุการบล็อก 100%)
-@st.cache_data(show_spinner=False, ttl=3600)
-def get_drive_image_base64(img_id):
-    try:
-        url = f"https://drive.google.com/uc?export=download&id={img_id}"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=5) as response:
-            if response.getcode() == 200:
-                b64 = base64.b64encode(response.read()).decode('utf-8')
-                return f"data:image/jpeg;base64,{b64}"
-    except:
-        pass
-    return None
+# 2. ไม่ใช้การโหลดภาพแบบ Base64 แล้ว เพราะ Google บล็อก
+# แต่เราจะแปลง ID ให้เป็นรูปแบบลิงก์สำหรับฝังแทน
+def get_direct_drive_link(img_id):
+    if not img_id:
+        return None
+    # ใช้ Google Drive Thumbnail API ซึ่งอนุญาตให้โหลดภาพข้ามโดเมนได้
+    return f"https://drive.google.com/thumbnail?id={img_id}&sz=w500-h500"
 
 # 3. สร้าง Dictionary จับคู่ "ชื่อช่าง" กับ "ID รูปภาพ Google Drive"
 tech_image_map = {}
@@ -159,7 +153,7 @@ if 'ช่าง' in df.columns and 'รูปภาพ' in df.columns:
         img_id_match = re.search(r'id=([a-zA-Z0-9_-]+)|d/([a-zA-Z0-9_-]+)', raw_url)
         if img_id_match:
             img_id = img_id_match.group(1) if img_id_match.group(1) else img_id_match.group(2)
-            tech_image_map[ref_name] = img_id # เก็บแค่ ID ไว้โหลดรูปตอนแสดงผล
+            tech_image_map[ref_name] = img_id # เก็บแค่ ID ไว้
         else:
             tech_image_map[ref_name] = None
 
@@ -309,19 +303,19 @@ if not ranking.empty:
             top_score = ranking.iloc[i]["KPI Score"]
             jobs_done = ranking.iloc[i]["Total Jobs"]
             
-            # โหลดรูปภาพจาก Google Drive เป็น Base64
+            # โหลดรูปภาพจาก Google Drive ด้วย Thumbnail API
             img_id = tech_image_map.get(tech_name)
             img_url = "https://cdn-icons-png.flaticon.com/512/3135/3135715.png" # ค่าเริ่มต้นถ้าไม่มีรูป
             
             if img_id:
-                b64_img = get_drive_image_base64(img_id)
-                if b64_img:
-                    img_url = b64_img
+                direct_link = get_direct_drive_link(img_id)
+                if direct_link:
+                    img_url = direct_link
             
             st.markdown(f"""
             <div style="text-align: center; background: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
                 <div class="profile-img-container">
-                    <img src="{img_url}" class="profile-img" onerror="this.src='https://cdn-icons-png.flaticon.com/512/3135/3135715.png'">
+                    <img src="{img_url}" class="profile-img" onerror="this.src='https://cdn-icons-png.flaticon.com/512/3135/3135715.png'" referrerpolicy="no-referrer">
                 </div>
                 <h3 style="margin-bottom: 5px; color: #000000;">{medals[i]}</h3>
                 <h4 style="margin-top: 0; color: #333333;">👷 {tech_name}</h4>
