@@ -141,22 +141,19 @@ tech_image_map = {}
 if 'ช่าง' in df.columns and 'รูปภาพ' in df.columns:
     ref_df = df[['ช่าง', 'รูปภาพ']].dropna()
     for _, row in ref_df.iterrows():
-        ref_name = str(row['ช่าง']).strip().replace(" ", "") # ลบช่องว่างให้ตรงกัน
-        if ref_name.startswith("ช่าง") and len(ref_name) > 4:
-            # แปลง "ช่างอ๊อฟ" (ไม่มีวรรค) เผื่อไว้เทียบ
-            pass
-        else:
-             # ใส่ตรรกะทำความสะอาดแบบเดียวกัน
-             ref_name = str(row['ช่าง']).strip()
-             ref_name = ref_name.replace("ช่าง ", "ช่าง")
+        # ทำความสะอาดชื่อช่างให้ตรงกับตรรกะด้านบน 100%
+        ref_name = str(row['ช่าง']).strip()
+        ref_name = ref_name.replace("ช่าง ", "ช่าง") 
+        ref_name = ref_name.replace("ช่างเอ้", "ช่างเอ")
 
         raw_url = str(row['รูปภาพ']).strip()
         
-        # แปลงลิงก์ Google Drive ให้เป็น Direct Image Link
+        # แปลงลิงก์ Google Drive ให้เป็น Thumbnail Link (วิธีนี้แก้ปัญหาภาพไม่ขึ้นได้ดีที่สุด)
         img_id_match = re.search(r'id=([a-zA-Z0-9_-]+)|d/([a-zA-Z0-9_-]+)', raw_url)
         if img_id_match:
             img_id = img_id_match.group(1) if img_id_match.group(1) else img_id_match.group(2)
-            tech_image_map[ref_name] = f"https://drive.google.com/uc?id={img_id}"
+            # ใช้ /thumbnail แทน /uc เพื่อหลีกเลี่ยงการถูก Google บล็อกการแสดงผล
+            tech_image_map[ref_name] = f"https://drive.google.com/thumbnail?id={img_id}&sz=w400"
         else:
             tech_image_map[ref_name] = raw_url
 
