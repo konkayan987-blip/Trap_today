@@ -350,7 +350,57 @@ with col4:
     """, unsafe_allow_html=True)
 
 st.markdown("---")
+# =========================================================
+# TOP PERFORMER PROFILE
+# =========================================================
 
+st.subheader("🏆 Top Performer")
+
+if not ranking.empty:
+
+    top_name = ranking.iloc[0][tech_col]
+    top_score = ranking.iloc[0]["KPI Score"]
+
+    image_col = None
+
+    for col in df.columns:
+
+        if "รูป" in col:
+
+            image_col = col
+
+    col1, col2 = st.columns([1,3])
+
+    with col1:
+
+        if image_col:
+
+            try:
+
+                img_url = df[
+                    df[tech_col] == top_name
+                ][image_col].dropna().iloc[0]
+
+                st.image(
+                    img_url,
+                    width=250
+                )
+
+            except:
+
+                st.warning("ไม่มีรูปภาพ")
+
+    with col2:
+
+        st.markdown(f"""
+        ## 👷 {top_name}
+
+        ### ⭐ KPI Score : {top_score}
+
+        ### 🏆 Best Performance
+
+        ### ✅ Steam Trap Specialist
+        """)
 # =========================================================
 # CHARTS
 # =========================================================
