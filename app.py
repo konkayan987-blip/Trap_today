@@ -8,6 +8,7 @@ import pandas as pd
 import plotly.express as px
 import numpy as np
 import re
+import unicodedata
 
 # =========================================================
 # PAGE CONFIG
@@ -80,6 +81,7 @@ sheet_id = "1xPGDL6bpA4k9_D-UkFz3ShMt-6Qzw7GY-mSF9h3i4jM"
 gid = "459028693"
 csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&gid={gid}"
 
+
 @st.cache_data(ttl=300)
 def load_data():
     try:
@@ -91,23 +93,40 @@ def load_data():
         st.error(f"โหลดข้อมูลไม่ได้ : {e}")
         return pd.DataFrame()
 
+
 df = load_data()
 
 if df.empty:
     st.warning("⚠️ ไม่มีข้อมูล หรือไม่สามารถเชื่อมต่อ Google Sheet ได้")
     st.stop()
 
+
 # =========================================================
 # HELPER: CLEAN NAME
 # =========================================================
 def clean_thai_name(name):
-    """ทำความสะอาดชื่อช่าง ลบช่องว่างและอักขระพิเศษ"""
+    """ทำความสะอาดชื่อช่าง ลบช่องว่างและอักขระพิเศษ (Robust Version)"""
     if pd.isna(name): return ""
-    # เอาช่องว่างออกทั้งหมด (Space, Tab, Zero-width space)
-    clean_str = re.sub(r'\s+', '', str(name)).strip()
-    # แก้ไขชื่อที่พบบ่อยว่าเขียนผิด
+    # 1. Normalize Unicode (ป้องกันสระซ้อนและรหัสอักขระที่ต่างกัน)
+    name = unicodedata.normalize('NFKC', str(name))
+    # 2. ลบสระซ้อนที่พบบ่อย (เช่น สระอ่ สองตัว)
+    name = re.sub(r'([\u0E48-\u0E4B])\1+', r'\1', name)
+    # 3. เอาช่องว่างออกทั้งหมด (Space, Tab, Zero-width space)
+    clean_str = re.sub(r'\s+', '', name).strip()
+    # 4. แก้ไขชื่อที่พบบ่อยว่าเขียนผิด
     clean_str = clean_str.replace("ช่างเอ้", "ช่างเอ")
     return clean_str
+
+
+def convert_google_drive_link(url):
+    """แปลงลิงก์ Google Drive ให้เป็น Direct Image Link"""
+    if 'drive.google.com' in str(url):
+        # ดึง File ID ออกมา
+        match = re.search(r'/d/([a-zA-Z0-9_-]+)', str(url))
+        if match:
+            return f"https://drive.google.com/uc?id={match.group(1)}"
+    return url
+
 
 # =========================================================
 # DETECT MAIN COLUMNS
@@ -132,13 +151,25 @@ tech_image_map = {}
 img_col = None
 map_tech_col = None
 
-# 1. สแกนหาคอลัมน์ที่มีคำว่า http (คอลัมน์รูปภาพ)
+# 1. สแกนหาคอลัมน์ที่มี URL ทั้งหมด
+url_cols = []
 for col in df.columns:
     if df[col].astype(str).str.contains(r'https?://', regex=True, na=False).any():
-        img_col = col
-        break
+        url_cols.append(col)
 
-# 2. ถอยหลังหาคอลัมน์ชื่อช่างอ้างอิง
+# 2. ค้นหาคอลัมน์ที่เป็น "รูปโปรไฟล์" (ใช้ Heuristics)
+# เราจะพยายามเลือกคอลัมน์ที่อยู่ขวาสุด หรือมีคำว่า 'รูป'/'Profile'
+best_img_col = None
+for col in reversed(url_cols):
+    if any(k in str(col) for k in ["รูป", "Profile", "Avatar", "Portrait"]):
+        best_img_col = col
+        break
+if not best_img_col and url_cols:
+    best_img_col = url_cols[-1] # ถ้าไม่แน่ใจ ให้เอาคอลัมน์ขวาสุดไว้ก่อน (มักเป็น Master List)
+
+img_col = best_img_col
+
+# 3. ถอยหลังหาคอลัมน์ชื่อช่างอ้างอิงสำหรับคอลัมน์รูปที่เลือก
 if img_col:
     idx = df.columns.get_loc(img_col)
     for i in range(idx - 1, -1, -1):
@@ -148,41 +179,31 @@ if img_col:
                 map_tech_col = col_name
                 break
     
+    # Fallback ถ้าหาคำว่า 'ช่าง' ไม่เจอ
     if not map_tech_col and idx > 0:
         map_tech_col = df.columns[idx - 1]
 
-# 3. จับคู่ข้อมูลชื่อกับรูปภาพแบบสุดโหด (Bulletproof Mapping)
+# 4. จับคู่ข้อมูลชื่อกับรูปภาพ
 if img_col and map_tech_col:
     for _, row in df.iterrows():
         raw_name = str(row[map_tech_col])
         raw_url = str(row[img_col])
-        
+
         if raw_name.lower() in ['nan', 'none', '']: continue
         if raw_url.lower() in ['nan', 'none', '']: continue
-        
-        # คลีนชื่อให้เหลือแค่ข้อความติดกัน (เช่น 'ช่างสอ')
+
         clean_name = clean_thai_name(raw_name)
-        
-        # ตัด tag ขยะ BBCode ทิ้งก่อน
+
+        # จัดการ URL
         clean_url_str = re.sub(r'\[/?url.*?\]', '', raw_url, flags=re.IGNORECASE)
         clean_url_str = re.sub(r'\[/?img.*?\]', '', clean_url_str, flags=re.IGNORECASE)
         
-        # ดึงเฉพาะลิงก์ที่ซ่อนอยู่ออกมา
-        final_url = None
         urls = re.findall(r'(https?://[^\s<>\[\]]+)', clean_url_str)
-        
         if urls:
-            # คัดกรองเอาเฉพาะลิงก์ที่เป็นรูปภาพ
-            for u in urls:
-                if any(ext in u.lower() for ext in ['.png', '.jpg', '.jpeg', '.webp', '.gif']):
-                    final_url = u
-                    break
-            # ถ้าหาลิงก์นามสกุลภาพไม่เจอ ให้เอาลิงก์แรกที่เจอมาใช้เผื่อไว้ก่อน
-            if not final_url:
-                final_url = urls[0]
-            
-        if final_url and clean_name:
-            tech_image_map[clean_name] = final_url
+            # เลือก URL แรกที่เจอ และแปลงเป็น direct link ถ้าเป็น Google Drive
+            final_url = convert_google_drive_link(urls[0])
+            if clean_name:
+                tech_image_map[clean_name] = final_url
 
 # =========================================================
 # FILTER LOGIC
@@ -221,12 +242,18 @@ if tech_col and total_jobs > 0:
     ranking["Quality"] = 30
     ranking["Attendance"] = 20
     ranking["Safety"] = 10
-    ranking["KPI Score"] = (ranking["Productivity"] + ranking["Quality"] + ranking["Attendance"] + ranking["Safety"]).round(2)
+    ranking["KPI Score"] = (
+                ranking["Productivity"] + ranking["Quality"] + ranking["Attendance"] + ranking["Safety"]).round(2)
+
 
     def grade(score):
-        if score >= 90: return "🟢 Excellent"
-        elif score >= 75: return "🟡 Good"
-        else: return "🔴 Improve"
+        if score >= 90:
+            return "🟢 Excellent"
+        elif score >= 75:
+            return "🟡 Good"
+        else:
+            return "🔴 Improve"
+
 
     ranking["Grade"] = ranking["KPI Score"].apply(grade)
     ranking = ranking.sort_values(by=["Total Jobs", "KPI Score"], ascending=[False, False]).reset_index(drop=True)
@@ -239,14 +266,22 @@ avg_score = round(ranking["KPI Score"].mean(), 2) if not ranking.empty else 0
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
-    st.markdown(f'<div class="kpi-card"><div class="kpi-title">Total Inspection</div><div class="kpi-value">{total_jobs}</div><div class="small-text">จำนวนงานตรวจทั้งหมด</div></div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="kpi-card"><div class="kpi-title">Total Inspection</div><div class="kpi-value">{total_jobs}</div><div class="small-text">จำนวนงานตรวจทั้งหมด</div></div>',
+        unsafe_allow_html=True)
 with col2:
-    st.markdown(f'<div class="kpi-card"><div class="kpi-title">Technician</div><div class="kpi-value">{total_tech}</div><div class="small-text">จำนวนช่าง</div></div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="kpi-card"><div class="kpi-title">Technician</div><div class="kpi-value">{total_tech}</div><div class="small-text">จำนวนช่าง</div></div>',
+        unsafe_allow_html=True)
 with col3:
-    st.markdown(f'<div class="kpi-card"><div class="kpi-title">Average KPI</div><div class="kpi-value">{avg_score}</div><div class="small-text">คะแนนเฉลี่ย</div></div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="kpi-card"><div class="kpi-title">Average KPI</div><div class="kpi-value">{avg_score}</div><div class="small-text">คะแนนเฉลี่ย</div></div>',
+        unsafe_allow_html=True)
 with col4:
     best_tech = ranking.iloc[0][tech_col] if not ranking.empty else "-"
-    st.markdown(f'<div class="kpi-card"><div class="kpi-title">Top Performer</div><div class="kpi-value">🏆</div><div class="small-text">{best_tech}</div></div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="kpi-card"><div class="kpi-title">Top Performer</div><div class="kpi-value">🏆</div><div class="small-text">{best_tech}</div></div>',
+        unsafe_allow_html=True)
 
 st.markdown("---")
 
@@ -258,7 +293,7 @@ st.subheader("🏆 Top Performers (จัดอันดับตามจำน
 if not ranking.empty:
     top_n = min(4, len(ranking))
     cols = st.columns(4)
-    
+
     medals = ["🥇", "🥈", "🥉", "🏅"]
     rank_classes = ["rank-1", "rank-2", "rank-3", "rank-4"]
     img_classes = ["img-rank-1", "img-rank-2", "img-rank-3", "img-rank-4"]
@@ -268,21 +303,21 @@ if not ranking.empty:
             tech_name = ranking.iloc[i][tech_col]
             score = ranking.iloc[i]["KPI Score"]
             jobs_done = ranking.iloc[i]["Total Jobs"]
-            
+
             # ดึงรูปลิงก์จากพจนานุกรมที่เราจับคู่ไว้
             img_url = tech_image_map.get(tech_name)
-            
+
             # ถ้าระบบหาไม่เจอ ให้ใช้รูปหมวกเหลืองสำรอง
             if not img_url:
                 img_url = "https://cdn-icons-png.flaticon.com/512/4140/4140048.png"
-            
+
             # สร้างการ์ดแสดงผล (มีการใส่ referrerpolicy="no-referrer" เพื่อกันการโดนบล็อก)
             st.markdown(f"""
             <div class="performer-card">
                 <div class="profile-img-container">
                     <img src="{img_url}" class="profile-img {img_classes[i]}" alt="Profile Image" referrerpolicy="no-referrer" />
                 </div>
-                <div class="{rank_classes[i]}">{medals[i]} อันดับ {i+1}</div>
+                <div class="{rank_classes[i]}">{medals[i]} อันดับ {i + 1}</div>
                 <div class="tech-name-text">👷 {tech_name}</div>
                 <hr style="margin: 10px 0; border-color: #eee;">
                 <div style="color:#d4af37; font-weight:bold; font-size: 16px;">⭐ KPI: {score}</div>
@@ -328,7 +363,8 @@ if date_col and not df.empty:
 st.subheader("🏆 KPI Ranking Table")
 
 if not ranking.empty:
-    show_table = ranking[[tech_col, "Total Jobs", "Productivity", "Quality", "Attendance", "Safety", "KPI Score", "Grade"]].copy()
+    show_table = ranking[
+        [tech_col, "Total Jobs", "Productivity", "Quality", "Attendance", "Safety", "KPI Score", "Grade"]].copy()
     show_table.columns = ["ช่าง", "จำนวนงาน", "Productivity", "Quality", "Attendance", "Safety", "KPI Score", "Grade"]
     st.dataframe(show_table, use_container_width=True, height=400)
 
@@ -344,21 +380,22 @@ with st.expander("🛠️ ตรวจสอบสถานะการเชื
     if tech_image_map:
         for t_name, link in tech_image_map.items():
             st.success(f"✅ พบรูปของ **{t_name}** -> [คลิกเพื่อดูรูปลิงก์]({link})")
-            if not any(ext in link.lower() for ext in ['.png', '.jpg', '.jpeg', '.gif']):
-                st.warning(f"⚠️ คำเตือน: ลิงก์ของ {t_name} ไม่ได้ลงท้ายด้วย .png หรือ .jpg อาจจะทำให้รูปภาพไม่แสดงผล")
+            if 'drive.google.com' in link and 'uc?id=' not in link:
+                st.warning(f"⚠️ คำเตือน: ลิงก์ของ {t_name} เป็น Google Drive ที่ยังไม่เปิดสาธารณะ หรือรูปแบบไม่ถูกต้อง")
     else:
-        st.error("❌ หาลิงก์รูปไม่เจอเลย กรุณาตรวจสอบตาราง Sheet")
-    
+        st.error("❌ หาลิงก์รูปไม่เจอเลย กรุณาตรวจสอบว่ามีคอลัมน์ที่มี URL (http...) หรือไม่")
+
     st.markdown("---")
-    st.markdown("**2. ข้อมูลคอลัมน์ที่ระบบ AI ตรวจพบ (Raw Table):**")
+    st.markdown("**2. ข้อมูลคอลัมน์ที่ระบบ Smart Image ตรวจพบ:**")
     if img_col and map_tech_col:
-        st.info(f"🔍 ตรวจพบ Column อ้างอิงชื่อช่าง: **'{map_tech_col}'** | Column รูป: **'{img_col}'**")
+        st.info(f"🔍 **คอลัมน์อ้างอิงชื่อ:** '{map_tech_col}' | **คอลัมน์รูปโปรไฟล์:** '{img_col}'")
+        st.markdown(f"*(ระบบเลือกคอลัมน์ '{img_col}' เพราะมี URL และเป็นคอลัมน์ที่อยู่ขวาสุด/มีคำเฉพาะ)*")
         raw_show = df[[map_tech_col, img_col]].copy()
         raw_show = raw_show.dropna(subset=[img_col])
         st.dataframe(raw_show, use_container_width=True)
     else:
         st.error("❌ สแกนไม่พบคอลัมน์ที่มีเนื้อหาเป็นลิงก์ http")
-    
+
     st.markdown("---")
     st.markdown("**3. ข้อมูลดิบทั้งหมดใน Sheet:**")
     st.dataframe(df, use_container_width=True, height=300)
