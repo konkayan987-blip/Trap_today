@@ -131,15 +131,7 @@ if tech_col:
     df[tech_col] = df[tech_col].astype(str).str.replace(r'\s+', '', regex=True)
     df[tech_col] = df[tech_col].replace({"ช่างเอ้": "ช่างเอ"})
 
-# 2. ไม่ใช้การโหลดภาพแบบ Base64 แล้ว เพราะ Google บล็อก
-# แต่เราจะแปลง ID ให้เป็นรูปแบบลิงก์สำหรับฝังแทน
-def get_direct_drive_link(img_id):
-    if not img_id:
-        return None
-    # ใช้ลิงก์รูปแบบ googleusercontent (ทะลุการบล็อกได้ดีที่สุดสำหรับ Drive)
-    return f"https://lh3.googleusercontent.com/d/{img_id}"
-
-# 3. สร้าง Dictionary จับคู่ "ชื่อช่าง" กับ "ID รูปภาพ Google Drive"
+# 2. สร้าง Dictionary จับคู่ "ชื่อช่าง" กับ "ลิงก์รูปภาพโดยตรง"
 tech_image_map = {}
 if 'ช่าง' in df.columns and 'รูปภาพ' in df.columns:
     ref_df = df[['ช่าง', 'รูปภาพ']].dropna()
@@ -150,10 +142,9 @@ if 'ช่าง' in df.columns and 'รูปภาพ' in df.columns:
 
         raw_url = str(row['รูปภาพ']).strip()
         
-        img_id_match = re.search(r'id=([a-zA-Z0-9_-]+)|d/([a-zA-Z0-9_-]+)', raw_url)
-        if img_id_match:
-            img_id = img_id_match.group(1) if img_id_match.group(1) else img_id_match.group(2)
-            tech_image_map[ref_name] = img_id # เก็บแค่ ID ไว้
+        # เก็บ URL ตรงๆ ไว้เลย ไม่ต้องพยายามหา Google Drive ID แล้ว
+        if raw_url.startswith('http'):
+            tech_image_map[ref_name] = raw_url
         else:
             tech_image_map[ref_name] = None
 
@@ -292,8 +283,8 @@ st.markdown("---")
 st.subheader("🏆 Top Performers (จัดอันดับตามจำนวนงานที่ตรวจ)")
 
 if not ranking.empty:
-    top_n = min(4, len(ranking)) # แสดงผลสูงสุด 4 อันดับแรก
-    cols = st.columns(4) # แบ่งพื้นที่เป็น 4 คอลัมน์เสมอ
+    top_n = min(4, len(ranking))
+    cols = st.columns(4)
     
     medals = ["🥇 อันดับ 1", "🥈 อันดับ 2", "🥉 อันดับ 3", "🏅 อันดับ 4"]
     
@@ -303,19 +294,17 @@ if not ranking.empty:
             top_score = ranking.iloc[i]["KPI Score"]
             jobs_done = ranking.iloc[i]["Total Jobs"]
             
-            # โหลดรูปภาพจาก Google Drive
-            img_id = tech_image_map.get(tech_name)
-            img_url = "https://cdn-icons-png.flaticon.com/512/3135/3135715.png" # ค่าเริ่มต้นถ้าไม่มีรูป
+            # โหลดรูปภาพตรงๆ จาก URL ใน Mapping
+            img_url = tech_image_map.get(tech_name)
             
-            if img_id:
-                direct_link = get_direct_drive_link(img_id)
-                if direct_link:
-                    img_url = direct_link
+            # ถ้าไม่มีรูปลิงก์ตรง ให้ใช้รูป Avatar ค่าเริ่มต้น
+            if not img_url:
+                img_url = "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
             
             st.markdown(f"""
             <div style="text-align: center; background: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
                 <div class="profile-img-container">
-                    <img src="{img_url}" class="profile-img" onerror="this.src='https://cdn-icons-png.flaticon.com/512/3135/3135715.png'" referrerpolicy="no-referrer">
+                    <img src="{img_url}" class="profile-img" onerror="this.src='https://cdn-icons-png.flaticon.com/512/3135/3135715.png'">
                 </div>
                 <h3 style="margin-bottom: 5px; color: #000000;">{medals[i]}</h3>
                 <h4 style="margin-top: 0; color: #333333;">👷 {tech_name}</h4>
