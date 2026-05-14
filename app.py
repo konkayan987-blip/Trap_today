@@ -59,7 +59,35 @@ st.markdown("""
 }
 .performer-card:hover { transform: translateY(-5px); }
 .tech-name-text { color: #222; font-weight: 800; font-size: 22px; margin-top: 10px;}
+
+/* Hide sidebar and buttons during printing/screenshot if needed */
+@media print {
+    .stSidebar, .stButton { display: none !important; }
+}
 </style>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script>
+function captureDashboard() {
+    // ซ่อน element ที่ไม่ต้องการในรูป
+    const sidebar = window.parent.document.querySelector('.stSidebar');
+    const header = window.parent.document.querySelector('header');
+    
+    const element = window.parent.document.querySelector('.main');
+    
+    html2canvas(element, {
+        useCORS: true,
+        allowTaint: true,
+        scale: 2, // เพิ่มความชัด
+        backgroundColor: "#f5f7fa"
+    }).then(canvas => {
+        const link = document.createElement('a');
+        link.download = 'SteamTrap_Dashboard.png';
+        link.href = canvas.toDataURL("image/png");
+        link.click();
+    });
+}
+</script>
 """, unsafe_allow_html=True)
 
 # =========================================================
@@ -72,6 +100,19 @@ st.sidebar.title("🔎 FILTER")
 if st.sidebar.button("🔄 ดึงข้อมูลล่าสุด (Clear Cache)", type="primary"):
     st.cache_data.clear()
     st.rerun()
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("📸 เครื่องมือ")
+if st.sidebar.button("🖼️ บันทึกภาพหน้าจอ (Screenshot)", use_container_width=True):
+    # ใช้ components.html เพื่อรัน JS
+    import streamlit.components.v1 as components
+    components.html("""
+        <script>
+        // รันฟังก์ชันที่ประกาศไว้ด้านบน
+        window.parent.captureDashboard();
+        </script>
+    """, height=0)
+
 st.sidebar.markdown("---")
 
 # =========================================================
