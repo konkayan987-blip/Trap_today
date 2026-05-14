@@ -7,7 +7,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import numpy as np
-
+import re  # เพิ่ม regex สำหรับจัดการลิงก์ Google Drive
 # =========================================================
 # PAGE CONFIG
 # =========================================================
@@ -105,38 +105,60 @@ if df.empty:
 # =========================================================
 # DETECT COLUMN
 # =========================================================
-date_col = None
-tech_col = None
+date_col = "ลงวันที่ทำการตรวจสตีมแทรป" if "ลงวันที่ทำการตรวจสตีมแทรป" in df.columns else None
+tech_col = "ช่าง ผู้ทำการตรวจสตีมแทรป" if "ช่าง ผู้ทำการตรวจสตีมแทรป" in df.columns else None
 score_col = None
-image_col = None
+image_col = "รูปภาพ" if "รูปภาพ" in df.columns else None
 
-for col in df.columns:
-    text = str(col).lower()
-    if "วันที่" in text or "เวลา" in text:
-        date_col = col
-    if "ผู้" in text or "ช่าง" in text:
-        tech_col = col
-    if "คะแนน" in text:
-        score_col = col
-    if "รูป" in text or "ภาพ" in text or "image" in text or "photo" in text:
-        image_col = col
+# ค้นหาคอลัมน์สำรองกรณีชื่อคอลัมน์เปลี่ยน
+if not date_col or not tech_col:
+    for col in df.columns:
+        text = str(col).lower()
+        if not date_col and ("วันที่" in text or "เวลา" in text):
+            date_col = col
+        if not tech_col and ("ผู้" in text or "ช่าง ผู้" in text or "ช่าง" in text):
+            # หลีกเลี่ยงคอลัมน์ "ช่าง" เดี่ยวๆ ที่เป็นแค่ตารางอ้างอิง
+            if col != "ช่าง": 
+                tech_col = col
 
 # =========================================================
-# CLEAN TECHNICIAN NAME
+# CLEAN TECHNICIAN NAME & CREATE IMAGE MAP
 # =========================================================
+# 1. ทำความสะอาดชื่อช่างในคอลัมน์หลัก
 if tech_col:
     df[tech_col] = df[tech_col].astype(str).str.strip()
     df[tech_col] = df[tech_col].replace({
-        "ช่าง เอ": "ช่างเอ",
-        "ช่างเอ ": "ช่างเอ",
-        "ช่างเอ้": "ช่างเอ",
-        "ช่าง บิว": "ช่างบิว",
-        "ช่างบิว ": "ช่างบิว",
-        "ช่าง พู": "ช่างพู",
-        "ช่างพู ": "ช่างพู",
-        "ช่าง ลือ": "ช่างลือ",
-        "ช่างลือ ": "ช่างลือ"
+        "ช่าง เอ": "ช่างเอ", "ช่างเอ ": "ช่างเอ", "ช่างเอ้": "ช่างเอ",
+        "ช่าง บิว": "ช่างบิว", "ช่างบิว ": "ช่างบิว",
+        "ช่าง พู": "ช่างพู", "ช่างพู ": "ช่างพู",
+        "ช่าง ลือ": "ช่างลือ", "ช่างลือ ": "ช่างลือ",
+        "ช่าง อ๊อฟ": "ช่างอ๊อฟ", "ช่างอ๊อฟ ": "ช่างอ๊อฟ",
+        "ช่าง สอ": "ช่างสอ", "ช่างสอ ": "ช่างสอ"
     })
+
+# 2. สร้าง Dictionary จับคู่ "ชื่อช่าง" กับ "ลิงก์รูปภาพ Google Drive"
+tech_image_map = {}
+if 'ช่าง' in df.columns and 'รูปภาพ' in df.columns:
+    ref_df = df[['ช่าง', 'รูปภาพ']].dropna()
+    for _, row in ref_df.iterrows():
+        ref_name = str(row['ช่าง']).strip().replace(" ", "") # ลบช่องว่างให้ตรงกัน
+        if ref_name.startswith("ช่าง") and len(ref_name) > 4:
+            # แปลง "ช่างอ๊อฟ" (ไม่มีวรรค) เผื่อไว้เทียบ
+            pass
+        else:
+             # ใส่ตรรกะทำความสะอาดแบบเดียวกัน
+             ref_name = str(row['ช่าง']).strip()
+             ref_name = ref_name.replace("ช่าง ", "ช่าง")
+
+        raw_url = str(row['รูปภาพ']).strip()
+        
+        # แปลงลิงก์ Google Drive ให้เป็น Direct Image Link
+        img_id_match = re.search(r'id=([a-zA-Z0-9_-]+)|d/([a-zA-Z0-9_-]+)', raw_url)
+        if img_id_match:
+            img_id = img_id_match.group(1) if img_id_match.group(1) else img_id_match.group(2)
+            tech_image_map[ref_name] = f"https://drive.google.com/uc?id={img_id}"
+        else:
+            tech_image_map[ref_name] = raw_url
 
 # =========================================================
 # SIDEBAR
@@ -187,6 +209,7 @@ total_tech = df[tech_col].nunique() if tech_col else 0
 # =========================================================
 ranking = pd.DataFrame()
 if tech_col and not df.empty:
+    # นับจำนวนแถว (จำนวนงานตรวจ)
     ranking = df.groupby(tech_col).size().reset_index(name='Total Jobs')
     
     # Productivity Score
@@ -216,7 +239,9 @@ if tech_col and not df.empty:
         else: return "🔴 Improve"
 
     ranking["Grade"] = ranking["KPI Score"].apply(grade)
-    ranking = ranking.sort_values(by="KPI Score", ascending=False)
+    
+    # สำคัญ: จัดอันดับโดยเน้นที่ Total Jobs (จำนวนงานตรวจ) เป็นหลัก หากเท่ากันค่อยดู KPI
+    ranking = ranking.sort_values(by=["Total Jobs", "KPI Score"], ascending=[False, False])
     ranking.index = range(1, len(ranking) + 1)
 
 # =========================================================
@@ -267,7 +292,7 @@ st.markdown("---")
 # =========================================================
 # TOP PERFORMER PROFILES (TOP 3)
 # =========================================================
-st.subheader("🏆 Top Performers (โชว์ภาพตามผลงาน)")
+st.subheader("🏆 Top Performers (จัดอันดับตามจำนวนงานที่ตรวจ)")
 
 if not ranking.empty:
     top_n = min(3, len(ranking)) # แสดงผลสูงสุด 3 อันดับแรก
@@ -281,28 +306,18 @@ if not ranking.empty:
             top_score = ranking.iloc[i]["KPI Score"]
             jobs_done = ranking.iloc[i]["Total Jobs"]
             
-            # หารูปภาพของช่าง
-            img_url = "https://cdn-icons-png.flaticon.com/512/3135/3135715.png" # รูป Default
-            if image_col:
-                try:
-                    user_images = df[df[tech_col] == tech_name][image_col].dropna()
-                    if not user_images.empty:
-                        # ดึงรูปแบบที่ 1 (หากมีหลายงานให้ดึงรูปล่าสุดหรืออันแรกที่หาเจอ)
-                        extracted_url = str(user_images.iloc[0]).strip()
-                        if "http" in extracted_url:
-                            img_url = extracted_url
-                except:
-                    pass
+            # ดึงรูปภาพจาก Dictionary ที่เราสร้างไว้ตอนต้น
+            img_url = tech_image_map.get(tech_name, "https://cdn-icons-png.flaticon.com/512/3135/3135715.png")
             
             st.markdown(f"""
             <div style="text-align: center; background: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
                 <div class="profile-img-container">
                     <img src="{img_url}" class="profile-img" onerror="this.src='https://cdn-icons-png.flaticon.com/512/3135/3135715.png'">
                 </div>
-                <h3 style="margin-bottom: 5px; color: #333;">{medals[i]}</h3>
-                <h4 style="margin-top: 0; color: #555;">👷 {tech_name}</h4>
-                <p style="margin: 5px 0;">⭐ KPI Score: <b>{top_score}</b></p>
-                <p style="margin: 5px 0;">🔧 งานที่ตรวจ: <b>{jobs_done}</b> จุด</p>
+                <h3 style="margin-bottom: 5px; color: #000000;">{medals[i]}</h3>
+                <h4 style="margin-top: 0; color: #333333;">👷 {tech_name}</h4>
+                <p style="margin: 5px 0; color: #222222;">⭐ KPI Score: <b style="color: #ff4b4b;">{top_score}</b></p>
+                <p style="margin: 5px 0; color: #222222;">🔧 ตรวจแล้ว: <b style="color: #000000;">{jobs_done}</b> รายการ</p>
             </div>
             """, unsafe_allow_html=True)
 else:
