@@ -142,7 +142,10 @@ if 'ช่าง' in df.columns and 'รูปภาพ' in df.columns:
 
         raw_url = str(row['รูปภาพ']).strip()
         
-        # เก็บ URL ตรงๆ ไว้เลย ไม่ต้องพยายามหา Google Drive ID แล้ว
+        # ป้องกันขั้นสุด: ลบแท็กขยะที่อาจจะติดมาจากการคัดลอกใน Postimages
+        raw_url = raw_url.replace("[/img][/url]", "").replace("[img]", "").replace("[url=", "").strip()
+        
+        # เก็บ URL ตรงๆ ไว้
         if raw_url.startswith('http'):
             tech_image_map[ref_name] = raw_url
         else:
@@ -152,6 +155,11 @@ if 'ช่าง' in df.columns and 'รูปภาพ' in df.columns:
 # SIDEBAR
 # =========================================================
 st.sidebar.title("🔎 FILTER")
+
+# เพิ่มปุ่มเคลียร์แคช เพื่อให้ดึงข้อมูลใหม่จาก Sheet ทันที
+if st.sidebar.button("🔄 ดึงข้อมูลล่าสุด (Clear Cache)"):
+    st.cache_data.clear()
+    st.rerun()
 
 # =========================================================
 # TECH FILTER
@@ -164,229 +172,8 @@ if tech_col:
         df = df[df[tech_col] == selected_tech]
 
 # =========================================================
-# DATE FILTER
+# EXPORT
 # =========================================================
-if date_col:
-    try:
-        df[date_col] = pd.to_datetime(df[date_col], errors='coerce', dayfirst=True)
-        df = df[df[date_col].notna()]
-        
-        if not df.empty:
-            min_date = df[date_col].min().date()
-            max_date = df[date_col].max().date()
-            
-            date_range = st.sidebar.date_input("เลือกช่วงวันที่", value=(min_date, max_date))
-            
-            if len(date_range) == 2:
-                start_date, end_date = date_range
-                df = df[
-                    (df[date_col].dt.date >= start_date) &
-                    (df[date_col].dt.date <= end_date)
-                ]
-    except:
-        pass
-
-# =========================================================
-# KPI CALCULATION
-# =========================================================
-total_jobs = len(df)
-total_tech = df[tech_col].nunique() if tech_col else 0
-
-# =========================================================
-# SCORING SYSTEM
-# =========================================================
-ranking = pd.DataFrame()
-if tech_col and not df.empty:
-    # นับจำนวนแถว (จำนวนงานตรวจ)
-    ranking = df.groupby(tech_col).size().reset_index(name='Total Jobs')
-    
-    # Productivity Score
-    max_job = ranking["Total Jobs"].max()
-    if max_job > 0:
-        ranking["Productivity"] = (ranking["Total Jobs"] / max_job) * 40
-    else:
-        ranking["Productivity"] = 0
-
-    # Quality, Attendance, Safety
-    ranking["Quality"] = 30
-    ranking["Attendance"] = 20
-    ranking["Safety"] = 10
-
-    # Total KPI
-    ranking["KPI Score"] = (
-        ranking["Productivity"] +
-        ranking["Quality"] +
-        ranking["Attendance"] +
-        ranking["Safety"]
-    ).round(2)
-
-    # Grade
-    def grade(score):
-        if score >= 90: return "🟢 Excellent"
-        elif score >= 75: return "🟡 Good"
-        else: return "🔴 Improve"
-
-    ranking["Grade"] = ranking["KPI Score"].apply(grade)
-    
-    # สำคัญ: จัดอันดับโดยเน้นที่ Total Jobs (จำนวนงานตรวจ) เป็นหลัก หากเท่ากันค่อยดู KPI
-    ranking = ranking.sort_values(by=["Total Jobs", "KPI Score"], ascending=[False, False])
-    ranking.index = range(1, len(ranking) + 1)
-
-# =========================================================
-# KPI SUMMARY
-# =========================================================
-avg_score = round(ranking["KPI Score"].mean(), 2) if not ranking.empty else 0
-
-col1, col2, col3, col4 = st.columns(4)
-with col1:
-    st.markdown(f"""
-    <div class="kpi-card">
-        <div class="kpi-title">Total Inspection</div>
-        <div class="kpi-value">{total_jobs}</div>
-        <div class="small-text">จำนวนงานตรวจทั้งหมด</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col2:
-    st.markdown(f"""
-    <div class="kpi-card">
-        <div class="kpi-title">Technician</div>
-        <div class="kpi-value">{total_tech}</div>
-        <div class="small-text">จำนวนช่าง</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col3:
-    st.markdown(f"""
-    <div class="kpi-card">
-        <div class="kpi-title">Average KPI</div>
-        <div class="kpi-value">{avg_score}</div>
-        <div class="small-text">คะแนนเฉลี่ย</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col4:
-    best_tech = ranking.iloc[0][tech_col] if not ranking.empty else "-"
-    st.markdown(f"""
-    <div class="kpi-card">
-        <div class="kpi-title">Top Performer</div>
-        <div class="kpi-value">🏆</div>
-        <div class="small-text">{best_tech}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-st.markdown("---")
-
-# =========================================================
-# TOP PERFORMER PROFILES (TOP 4)
-# =========================================================
-st.subheader("🏆 Top Performers (จัดอันดับตามจำนวนงานที่ตรวจ)")
-
-if not ranking.empty:
-    top_n = min(4, len(ranking))
-    cols = st.columns(4)
-    
-    medals = ["🥇 อันดับ 1", "🥈 อันดับ 2", "🥉 อันดับ 3", "🏅 อันดับ 4"]
-    
-    for i in range(top_n):
-        with cols[i]:
-            tech_name = ranking.iloc[i][tech_col]
-            top_score = ranking.iloc[i]["KPI Score"]
-            jobs_done = ranking.iloc[i]["Total Jobs"]
-            
-            # โหลดรูปภาพตรงๆ จาก URL ใน Mapping
-            img_url = tech_image_map.get(tech_name)
-            
-            # ถ้าไม่มีรูปลิงก์ตรง ให้ใช้รูป Avatar ค่าเริ่มต้น
-            if not img_url:
-                img_url = "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
-            
-            st.markdown(f"""
-            <div style="text-align: center; background: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
-                <div class="profile-img-container">
-                    <img src="{img_url}" class="profile-img" onerror="this.src='https://cdn-icons-png.flaticon.com/512/3135/3135715.png'">
-                </div>
-                <h3 style="margin-bottom: 5px; color: #000000;">{medals[i]}</h3>
-                <h4 style="margin-top: 0; color: #333333;">👷 {tech_name}</h4>
-                <p style="margin: 5px 0; color: #222222;">⭐ KPI Score: <b style="color: #ff4b4b;">{top_score}</b></p>
-                <p style="margin: 5px 0; color: #222222;">🔧 ตรวจแล้ว: <b style="color: #000000;">{jobs_done}</b> รายการ</p>
-            </div>
-            """, unsafe_allow_html=True)
-else:
-    st.info("ยังไม่มีข้อมูลผลงานสำหรับจัดอันดับ")
-
-st.markdown("<br>", unsafe_allow_html=True)
-
-# =========================================================
-# CHARTS
-# =========================================================
-if not ranking.empty:
-    left, right = st.columns(2)
-
-    # BAR CHART
-    with left:
-        st.subheader("👷 จำนวนงานตรวจของช่าง")
-        fig_bar = px.bar(
-            ranking, x=tech_col, y='Total Jobs',
-            text='Total Jobs', color='KPI Score',
-            color_continuous_scale="Reds"
-        )
-        fig_bar.update_traces(textposition='outside')
-        fig_bar.update_layout(height=450)
-        st.plotly_chart(fig_bar, use_container_width=True)
-
-    # PIE CHART
-    with right:
-        st.subheader("📊 สัดส่วนงานของช่าง")
-        fig_pie = px.pie(
-            ranking, names=tech_col, values='Total Jobs',
-            hole=0.45, color_discrete_sequence=px.colors.sequential.RdBu
-        )
-        fig_pie.update_layout(height=450)
-        st.plotly_chart(fig_pie, use_container_width=True)
-
-    # KPI SCORE CHART
-    st.subheader("⭐ KPI Score Ranking")
-    fig_score = px.bar(
-        ranking, x=tech_col, y='KPI Score',
-        text='KPI Score', color='KPI Score',
-        color_continuous_scale="Viridis"
-    )
-    fig_score.update_traces(textposition='outside')
-    fig_score.update_layout(height=500)
-    st.plotly_chart(fig_score, use_container_width=True)
-
-# =========================================================
-# DAILY TREND
-# =========================================================
-if date_col and not df.empty:
-    st.subheader("📈 Daily Inspection Trend")
-    daily = df.groupby(df[date_col].dt.date).size().reset_index(name='Total Jobs')
-    fig_line = px.line(daily, x=date_col, y='Total Jobs', markers=True)
-    fig_line.update_layout(height=450)
-    st.plotly_chart(fig_line, use_container_width=True)
-
-# =========================================================
-# RANKING TABLE
-# =========================================================
-if not ranking.empty:
-    st.subheader("🏆 KPI Ranking Table")
-    
-    show_table = ranking[[
-        tech_col, "Total Jobs", "Productivity", 
-        "Quality", "Attendance", "Safety", "KPI Score", "Grade"
-    ]].copy()
-    
-    show_table.columns = [
-        "ช่าง", "จำนวนงาน", "Productivity", 
-        "Quality", "Attendance", "Safety", "KPI Score", "Grade"
-    ]
-    
-    st.dataframe(show_table, use_container_width=True, height=400)
-
-    # =========================================================
-    # EXPORT
-    # =========================================================
     st.subheader("⬇️ Export Data")
     csv = show_table.to_csv(index=False).encode('utf-8-sig')
     st.download_button(
@@ -399,7 +186,11 @@ if not ranking.empty:
 # =========================================================
 # RAW DATA
 # =========================================================
-with st.expander("📄 ดูข้อมูล Raw Data ทั้งหมด"):
+with st.expander("📄 ดูข้อมูล Raw Data ทั้งหมด (คลิกเพื่อตรวจสอบการเชื่อมลิงก์)"):
+    st.write("**สถานะการจับคู่รูปภาพของช่าง:**")
+    st.json(tech_image_map) # พิมพ์ค่าที่จับคู่ได้ให้ดูเลย จะได้รู้ว่าลิงก์ถูกดึงมาไหม
+    st.write("---")
+    st.write("**ข้อมูลหลักในตาราง:**")
     st.dataframe(df, use_container_width=True, height=500)
 
 # =========================================================
